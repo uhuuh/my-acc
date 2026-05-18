@@ -63,45 +63,23 @@ class ops_dump(TorchDispatchMode):
     
     def _dump_operation(self, func, args, kwargs, result):
         """Dump a single operator call."""
-        # Extract caller information - safely traverse frames
-        frame = inspect.currentframe()
+        # Get full call stack (no frame skipping)
+        call_stack = ''.join(traceback.format_stack())
         
-        # Try to find the actual caller frame (go up multiple levels)
-        caller_frame = None
+        # Extract caller info from call stack (use last frame before operator_dumper.py)
+        stack = traceback.extract_stack()
         filename = "unknown"
         lineno = 0
         
-        # Traverse up to find a frame with useful info
-        current = frame
-        for _ in range(10):  # Try up to 10 levels
-            if current is None:
+        # Find first frame that's not operator_dumper.py (from the end)
+        for frame_info in reversed(stack):
+            if not frame_info.filename.endswith('operator_dumper.py'):
+                filename = os.path.basename(frame_info.filename)
+                lineno = frame_info.lineno
                 break
-            current = current.f_back
-            if current is not None and current.f_code.co_filename not in [
-                __file__,  # Skip this file
-                inspect.getfile(TorchDispatchMode),  # Skip TorchDispatchMode file
-            ]:
-                caller_frame = current
-                break
-        
-        if caller_frame is not None:
-            filename = os.path.basename(caller_frame.f_code.co_filename)
-            lineno = caller_frame.f_lineno
-        else:
-            # Fallback: use the call stack to find first non-internal frame
-            stack = traceback.extract_stack()
-            for frame_info in reversed(stack):
-                if not frame_info.filename.endswith('operator_dumper.py') and \
-                   not 'torch/utils/_python_dispatch' in frame_info.filename:
-                    filename = os.path.basename(frame_info.filename)
-                    lineno = frame_info.lineno
-                    break
         
         # Get operator name
         opname = str(func)
-        
-        # Get full call stack
-        call_stack = ''.join(traceback.format_stack())
         
         # Serialize inputs (no outputs)
         inputs = [_serialize_value(arg) for arg in args]
