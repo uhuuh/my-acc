@@ -103,35 +103,33 @@ class ops_dump(TorchDispatchMode):
         # Get full call stack
         call_stack = ''.join(traceback.format_stack())
         
-        # Serialize inputs and outputs
+        # Serialize inputs (no outputs)
         inputs = [_serialize_value(arg) for arg in args]
         if kwargs:
             inputs.append(_serialize_value(kwargs))
-        outputs = [_serialize_value(result)]
         
-        # Create dump data
+        # Create dump data (no outputs)
         dump_data = {
             'sequence': self.sequence,
             'filename': filename,
             'lineno': lineno,
             'opname': opname,
             'call_stack': call_stack,
-            'inputs': inputs,
-            'outputs': outputs
+            'inputs': inputs
         }
         
-        # Create dump filename
+        # Create dump filename (6-digit sequence)
         sanitized_name = _sanitize_filename(filename)
         opname_safe = opname.replace('.', '_').replace('::', '_')
-        dump_filename = f"{self.sequence:04d}_{sanitized_name}_{opname_safe}.pkl"
+        dump_filename = f"{self.sequence:06d}_{sanitized_name}_{opname_safe}.pkl"
         dump_path = os.path.join(self.session_dir, dump_filename)
         
         # Write dump file
         with open(dump_path, 'wb') as f:
             pickle.dump(dump_data, f)
         
-        # Log the dump
-        print(f"[DUMP] {self.sequence:04d} | {filename}:{lineno} | {opname} | saved to {dump_filename}")
+        # Log the dump (6-digit sequence)
+        print(f"[DUMP] {self.sequence:06d} | {filename}:{lineno} | {opname} | saved to {dump_filename}")
         
         self.sequence += 1
     
