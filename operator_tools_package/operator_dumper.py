@@ -11,7 +11,7 @@ import inspect
 from datetime import datetime
 import torch
 from torch.utils._python_dispatch import TorchDispatchMode
-from serialization import _serialize_value, _sanitize_filename
+from .serialization import _serialize_value, _sanitize_filename
 
 
 class OperatorDumper(TorchDispatchMode):

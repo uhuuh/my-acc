@@ -7,7 +7,7 @@ Provides compare_operator_dumps function for comparing two dump sessions.
 import os
 import pickle
 from typing import List, Dict
-from comparison_utils import _lcs_length, _format_type_info, _compare_element
+from .comparison_utils import _lcs_length, _format_type_info, _compare_element
 
 
 def _load_dumps(dump_dir: str) -> List[Dict]:
