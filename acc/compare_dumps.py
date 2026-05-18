@@ -7,7 +7,12 @@ Provides ops_comp function for comparing two dump sessions.
 import os
 import pickle
 from typing import List, Dict
-from .comparison_utils import _lcs_length, _format_type_info, _compare_element
+from .comparison_utils import (
+    _lcs_length, 
+    create_comparator, 
+    MissingInAComparator, 
+    MissingInBComparator
+)
 
 
 def _load_dumps(dump_dir: str) -> List[Dict]:
@@ -58,43 +63,30 @@ def ops_comp(dump_dir_a: str, dump_dir_b: str):
     b_only = len(dumps_b) - lcs_len
     print(f"[LCS] Matched: {lcs_len} operators | A-only: {a_only} | B-only: {b_only}")
     
-    # Log matches and skips
-    matched_a_indices = set(idx_a for idx_a, idx_b in matched_pairs)
-    matched_b_indices = set(idx_b for idx_a, idx_b in matched_pairs)
+    # Build lookup map for efficiency
+    matched_map_a = {idx_a: idx_b for idx_a, idx_b in matched_pairs}
+    matched_map_b = {idx_b: idx_a for idx_a, idx_b in matched_pairs}
     
+    # Log matches and skips
     for i, dump in enumerate(dumps_a):
-        if i in matched_a_indices:
-            # Find the matching pair
-            for idx_a, idx_b in matched_pairs:
-                if idx_a == i:
-                    match_idx = idx_b
-                    break
-            print(f"[MATCH] A:{dump['sequence']:04d}_{dump['filename']}_{dump['opname']} <-> B:{dumps_b[match_idx]['sequence']:04d}_{dumps_b[match_idx]['filename']}_{dumps_b[match_idx]['opname']}")
+        if i in matched_map_a:
+            match_idx = matched_map_a[i]
+            print(f"[MATCH] A:{dump['sequence']:06d}_{dump['filename']}_{dump['opname']} <-> B:{dumps_b[match_idx]['sequence']:06d}_{dumps_b[match_idx]['filename']}_{dumps_b[match_idx]['opname']}")
         else:
-            print(f"[SKIP] A:{dump['sequence']:04d}_{dump['filename']}_{dump['opname']} (no match in B)")
+            print(f"[SKIP] A:{dump['sequence']:06d}_{dump['filename']}_{dump['opname']} (no match in B)")
     
     for j, dump in enumerate(dumps_b):
-        if j not in matched_b_indices:
-            print(f"[SKIP] B:{dump['sequence']:04d}_{dump['filename']}_{dump['opname']} (no match in A)")
+        if j not in matched_map_b:
+            print(f"[SKIP] B:{dump['sequence']:06d}_{dump['filename']}_{dump['opname']} (no match in A)")
     
     # Phase 2: Detailed comparison
     print(f"[COMPARE] Starting detailed comparison of {lcs_len} matched pairs...")
-    
-    # Statistics counters
-    stats = {
-        'exact_match': 0,
-        'precision_diff': 0,
-        'dtype_mismatch': 0,
-        'shape_mismatch': 0,
-        'input_count_mismatch': 0,
-        'output_count_mismatch': 0
-    }
     
     for idx_a, idx_b in matched_pairs:
         dump_a = dumps_a[idx_a]
         dump_b = dumps_b[idx_b]
         
-        op_id = f"{dump_a['sequence']:04d}_{dump_a['filename']}_{dump_a['opname']}"
+        op_id = f"{dump_a['sequence']:06d}_{dump_a['filename']}_{dump_a['opname']}"
         print(f"[COMPARE] {op_id}:")
         
         # Compare inputs
@@ -102,56 +94,36 @@ def ops_comp(dump_dir_a: str, dump_dir_b: str):
         inputs_b = dump_b['inputs']
         
         max_inputs = max(len(inputs_a), len(inputs_b))
-        if len(inputs_a) != len(inputs_b):
-            stats['input_count_mismatch'] += 1
         
         for i in range(max_inputs):
             if i >= len(inputs_a):
-                b_info = _format_type_info(inputs_b[i])
-                print(f"  Inputs[{i}] | <missing> | {b_info} | missing_in_A")
+                comparator = MissingInAComparator(inputs_b[i])
             elif i >= len(inputs_b):
-                a_info = _format_type_info(inputs_a[i])
-                print(f"  Inputs[{i}] | {a_info} | <missing> | missing_in_B")
+                comparator = MissingInBComparator(inputs_a[i])
             else:
-                log, element_stats = _compare_element(inputs_a[i], inputs_b[i])
-                print(f"  Inputs[{i}] | {log}")
-                # Update stats
-                if element_stats['exact_match']:
-                    stats['exact_match'] += 1
-                if element_stats['precision_diff']:
-                    stats['precision_diff'] += 1
-                if element_stats['dtype_mismatch']:
-                    stats['dtype_mismatch'] += 1
-                if element_stats['shape_mismatch']:
-                    stats['shape_mismatch'] += 1
+                comparator = create_comparator(inputs_a[i], inputs_b[i])
+            
+            left_info, right_info = comparator.get_type_info()
+            result = comparator.compare()
+            print(f"  Inputs[{i}] | {left_info} | {right_info} | {result['log']}")
         
-        # Compare outputs
-        outputs_a = dump_a['outputs']
-        outputs_b = dump_b['outputs']
-        
-        max_outputs = max(len(outputs_a), len(outputs_b))
-        if len(outputs_a) != len(outputs_b):
-            stats['output_count_mismatch'] += 1
-        
-        for i in range(max_outputs):
-            if i >= len(outputs_a):
-                b_info = _format_type_info(outputs_b[i])
-                print(f"  Outputs[{i}] | <missing> | {b_info} | missing_in_A")
-            elif i >= len(outputs_b):
-                a_info = _format_type_info(outputs_a[i])
-                print(f"  Outputs[{i}] | {a_info} | <missing> | missing_in_B")
-            else:
-                log, element_stats = _compare_element(outputs_a[i], outputs_b[i])
-                print(f"  Outputs[{i}] | {log}")
-                # Update stats
-                if element_stats['exact_match']:
-                    stats['exact_match'] += 1
-                if element_stats['precision_diff']:
-                    stats['precision_diff'] += 1
-                if element_stats['dtype_mismatch']:
-                    stats['dtype_mismatch'] += 1
-                if element_stats['shape_mismatch']:
-                    stats['shape_mismatch'] += 1
+        # Compare outputs (if exists in dumps)
+        if 'outputs' in dump_a and 'outputs' in dump_b:
+            outputs_a = dump_a['outputs']
+            outputs_b = dump_b['outputs']
+            
+            max_outputs = max(len(outputs_a), len(outputs_b))
+            
+            for i in range(max_outputs):
+                if i >= len(outputs_a):
+                    comparator = MissingInAComparator(outputs_b[i])
+                elif i >= len(outputs_b):
+                    comparator = MissingInBComparator(outputs_a[i])
+                else:
+                    comparator = create_comparator(outputs_a[i], outputs_b[i])
+                
+                left_info, right_info = comparator.get_type_info()
+                result = comparator.compare()
+                print(f"  Outputs[{i}] | {left_info} | {right_info} | {result['log']}")
     
-    # Summary
-    print(f"[SUMMARY] Total: {lcs_len} | Exact match: {stats['exact_match']} | Precision diff: {stats['precision_diff']} | Dtype mismatch: {stats['dtype_mismatch']} | Shape mismatch: {stats['shape_mismatch']} | Input count mismatch: {stats['input_count_mismatch']} | Output count mismatch: {stats['output_count_mismatch']}")
+    # No summary (removed per requirement)
