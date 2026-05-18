@@ -38,13 +38,13 @@ class OperatorDumper(TorchDispatchMode):
         self.sequence = 0
         self._active = True
         print(f"[DUMP] Created session directory: {self.session_dir}")
-        return self
+        return super().__enter__()
     
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Exit context manager."""
         self._active = False
         print(f"[DUMP] Session completed: {self.sequence} operators dumped to {self.session_dir}")
-        return False
+        return super().__exit__(exc_type, exc_val, exc_tb)
     
     def __torch_dispatch__(self, func, types, args=(), kwargs=None):
         """Intercept torch operator calls."""
