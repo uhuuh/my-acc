@@ -1,25 +1,25 @@
 """
 Test script for acc package.
 
-Tests basic functionality of OperatorDumper and compare_operator_dumps.
+Tests basic functionality of ops_dump and ops_comp.
 """
 
 import torch
 import tempfile
 import os
-from acc import OperatorDumper, compare_operator_dumps
+from acc import ops_dump, ops_comp
 
 
-def test_operator_dumper_context_manager():
-    """Test OperatorDumper as context manager."""
+def test_ops_dump_context_manager():
+    """Test ops_dump as context manager."""
     print("=" * 60)
-    print("Test 1: OperatorDumper as context manager")
+    print("Test 1: ops_dump as context manager")
     print("=" * 60)
     
     # Create temp directory for dumps
     with tempfile.TemporaryDirectory() as tmpdir:
         # Test context manager
-        with OperatorDumper(tmpdir) as dumper:
+        with ops_dump(tmpdir) as dumper:
             # Create some tensors and operations
             a = torch.randn(32, 64)
             b = torch.randn(64, 128)
@@ -42,15 +42,15 @@ def test_operator_dumper_context_manager():
     print("\n✓ Test 1 passed\n")
 
 
-def test_operator_dumper_decorator():
-    """Test OperatorDumper as decorator."""
+def test_ops_dump_decorator():
+    """Test ops_dump as decorator."""
     print("=" * 60)
-    print("Test 2: OperatorDumper as decorator")
+    print("Test 2: ops_dump as decorator")
     print("=" * 60)
     
     with tempfile.TemporaryDirectory() as tmpdir:
         # Define a function to decorate
-        @OperatorDumper(tmpdir)
+        @ops_dump(tmpdir)
         def run_model():
             x = torch.randn(16, 32)
             y = torch.randn(32, 64)
@@ -71,10 +71,10 @@ def test_operator_dumper_decorator():
     print("\n✓ Test 2 passed\n")
 
 
-def test_compare_operator_dumps():
-    """Test compare_operator_dumps function."""
+def test_ops_comp():
+    """Test ops_comp function."""
     print("=" * 60)
-    print("Test 3: compare_operator_dumps")
+    print("Test 3: ops_comp")
     print("=" * 60)
     
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -85,14 +85,14 @@ def test_compare_operator_dumps():
         os.makedirs(dump_dir_b)
         
         # First session (A)
-        with OperatorDumper(dump_dir_a) as dumper:
+        with ops_dump(dump_dir_a) as dumper:
             a1 = torch.randn(32, 64)
             b1 = torch.randn(64, 128)
             c1 = torch.matmul(a1, b1)
             d1 = torch.relu(c1)
         
         # Second session (B) - same ops but different values
-        with OperatorDumper(dump_dir_b) as dumper:
+        with ops_dump(dump_dir_b) as dumper:
             a2 = torch.randn(32, 64)
             b2 = torch.randn(64, 128)
             c2 = torch.matmul(a2, b2)
@@ -109,7 +109,7 @@ def test_compare_operator_dumps():
         print("-" * 60)
         
         # Compare dumps
-        compare_operator_dumps(session_a_path, session_b_path)
+        ops_comp(session_a_path, session_b_path)
     
     print("\n✓ Test 3 passed\n")
 
@@ -117,19 +117,19 @@ def test_compare_operator_dumps():
 def main():
     """Run all tests."""
     print("\n" + "=" * 60)
-    print("Operator Tools Package - Integration Tests")
+    print("ACC Package - Integration Tests")
     print("=" * 60 + "\n")
     
     # Test import first
     print("Testing import...")
-    print(f"  OperatorDumper: {OperatorDumper}")
-    print(f"  compare_operator_dumps: {compare_operator_dumps}")
+    print(f"  ops_dump: {ops_dump}")
+    print(f"  ops_comp: {ops_comp}")
     print("✓ Import successful\n")
     
     # Run tests
-    test_operator_dumper_context_manager()
-    test_operator_dumper_decorator()
-    test_compare_operator_dumps()
+    test_ops_dump_context_manager()
+    test_ops_dump_decorator()
+    test_ops_comp()
     
     print("=" * 60)
     print("All tests passed! ✓")

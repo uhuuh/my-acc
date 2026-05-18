@@ -2,23 +2,23 @@
 PyTorch Operator Dump & Precision Comparison Tool
 
 Usage:
-    from acc import OperatorDumper, compare_operator_dumps
+    from acc import ops_dump, ops_comp
     
     # Context manager mode
-    with OperatorDumper("/path/to/dumps") as dumper:
+    with ops_dump("/path/to/dumps") as dumper:
         model(input)
     
     # Decorator mode
-    @OperatorDumper("/path/to/dumps")
+    @ops_dump("/path/to/dumps")
     def run_model(input):
         return model(input)
     
     # Compare dumps
-    compare_operator_dumps("/path/to/dump1", "/path/to/dump2")
+    ops_comp("/path/to/dump1", "/path/to/dump2")
 """
 
-from .operator_dumper import OperatorDumper
-from .compare_dumps import compare_operator_dumps
+from .operator_dumper import ops_dump
+from .compare_dumps import ops_comp
 
-__all__ = ['OperatorDumper', 'compare_operator_dumps']
+__all__ = ['ops_dump', 'ops_comp']
 __version__ = '0.1.0'

@@ -1,7 +1,7 @@
 """
 Operator Dumper for PyTorch Operator Dump Tool.
 
-Provides OperatorDumper class for capturing operator calls.
+Provides ops_dump class for capturing operator calls.
 """
 
 import os
@@ -14,7 +14,7 @@ from torch.utils._python_dispatch import TorchDispatchMode
 from .serialization import _serialize_value, _sanitize_filename
 
 
-class OperatorDumper(TorchDispatchMode):
+class ops_dump(TorchDispatchMode):
     """Context manager and decorator for dumping PyTorch operator calls."""
     
     def __init__(self, dump_path: str):

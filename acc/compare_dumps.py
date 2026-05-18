@@ -1,7 +1,7 @@
 """
 Operator Dumps Comparison for PyTorch Operator Dump Tool.
 
-Provides compare_operator_dumps function for comparing two dump sessions.
+Provides ops_comp function for comparing two dump sessions.
 """
 
 import os
@@ -31,7 +31,7 @@ def _load_dumps(dump_dir: str) -> List[Dict]:
     return dumps
 
 
-def compare_operator_dumps(dump_dir_a: str, dump_dir_b: str):
+def ops_comp(dump_dir_a: str, dump_dir_b: str):
     """
     Compare two operator dump sessions.
     
