@@ -2,7 +2,7 @@
 PyTorch Operator Dump & Precision Comparison Tool
 
 Usage:
-    from operator_tools_package import OperatorDumper, compare_operator_dumps
+    from acc import OperatorDumper, compare_operator_dumps
     
     # Context manager mode
     with OperatorDumper("/path/to/dumps") as dumper:

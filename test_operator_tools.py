@@ -1,5 +1,5 @@
 """
-Test script for operator_tools_package.
+Test script for acc package.
 
 Tests basic functionality of OperatorDumper and compare_operator_dumps.
 """
@@ -7,7 +7,7 @@ Tests basic functionality of OperatorDumper and compare_operator_dumps.
 import torch
 import tempfile
 import os
-from operator_tools_package import OperatorDumper, compare_operator_dumps
+from acc import OperatorDumper, compare_operator_dumps
 
 
 def test_operator_dumper_context_manager():
