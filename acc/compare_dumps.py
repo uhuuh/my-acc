@@ -11,7 +11,8 @@ from .comparison_utils import (
     _lcs_length, 
     create_comparator, 
     MissingInAComparator, 
-    MissingInBComparator
+    MissingInBComparator,
+    format_comparison_log
 )
 
 
@@ -105,7 +106,8 @@ def ops_comp(dump_dir_a: str, dump_dir_b: str):
             
             left_info, right_info = comparator.get_type_info()
             result = comparator.compare()
-            print(f"  Inputs[{i}] | {left_info} | {right_info} | {result['log']}")
+            log = format_comparison_log(result)
+            print(f"  Inputs[{i}] | {left_info} | {right_info} | {log}")
         
         # Compare outputs (if exists in dumps)
         if 'outputs' in dump_a and 'outputs' in dump_b:
@@ -124,6 +126,7 @@ def ops_comp(dump_dir_a: str, dump_dir_b: str):
                 
                 left_info, right_info = comparator.get_type_info()
                 result = comparator.compare()
-                print(f"  Outputs[{i}] | {left_info} | {right_info} | {result['log']}")
+                log = format_comparison_log(result)
+                print(f"  Outputs[{i}] | {left_info} | {right_info} | {log}")
     
     # No summary (removed per requirement)

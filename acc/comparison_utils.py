@@ -47,6 +47,70 @@ def _lcs_length(a: List[str], b: List[str]) -> Tuple[int, List[Tuple[int, int]]]
     return dp[m][n], matched_pairs
 
 
+def format_comparison_log(result: Dict) -> str:
+    """
+    Format comparison result to log string.
+    
+    Args:
+        result: Comparison result dict from compare()
+    
+    Returns:
+        Formatted log string
+    """
+    if 'missing_in_A' in result:
+        return "missing_in_A"
+    
+    if 'missing_in_B' in result:
+        return "missing_in_B"
+    
+    if 'unsupported' in result:
+        return "type_unsupported"
+    
+    if 'content_skipped' in result:
+        dtype_status = 'match' if result['dtype_match'] else 'mismatch'
+        shape_status = 'match' if result['shape_match'] else 'mismatch'
+        return f"dtype={dtype_status}, shape={shape_status}, content_skipped"
+    
+    if 'exact_match' in result and 'diff' in result:
+        exact = result['exact_match']
+        diff = result['diff']
+        if isinstance(diff, float):
+            return f"exact_match={exact}, diff={diff:.6e}"
+        else:
+            return f"exact_match={exact}, diff={diff}"
+    
+    if 'dtype_match' in result and 'shape_match' in result:
+        # Tensor comparison
+        parts = []
+        parts.append(f"dtype=match, shape=match")
+        parts.append(f"exact_match={result.get('exact_match', False)}")
+        
+        if 'match_ratio' in result:
+            parts.append(f"match_ratio={result['match_ratio']:.4f}")
+        
+        if 'max_err' in result:
+            parts.append(f"max_err={result['max_err']:.6e}")
+        
+        if 'min_err' in result:
+            parts.append(f"min_err={result['min_err']:.6e}")
+        
+        if 'mean_err' in result:
+            parts.append(f"mean_err={result['mean_err']:.6e}")
+        
+        if 'mse' in result:
+            parts.append(f"mse={result['mse']:.6e}")
+        
+        if 'cosine' in result:
+            parts.append(f"cosine={result['cosine']:.6f}")
+        
+        return ', '.join(parts)
+    
+    if 'exact_match' in result:
+        return f"exact_match={result['exact_match']}"
+    
+    return "unknown_format"
+
+
 class ElementComparator:
     """Base class for element comparison."""
     
@@ -60,7 +124,7 @@ class ElementComparator:
         raise NotImplementedError
     
     def compare(self) -> Dict:
-        """Return comparison result."""
+        """Return comparison result (no log string)."""
         raise NotImplementedError
 
 
@@ -73,8 +137,7 @@ class NoneComparator(ElementComparator):
     def compare(self) -> Dict:
         exact_match = self.a is None and self.b is None
         return {
-            'exact_match': exact_match,
-            'log': f"exact_match={exact_match}"
+            'exact_match': exact_match
         }
 
 
@@ -89,8 +152,7 @@ class IntComparator(ElementComparator):
         diff = abs(self.a - self.b) if not exact_match else 0
         return {
             'exact_match': exact_match,
-            'diff': diff,
-            'log': f"exact_match={exact_match}, diff={diff}"
+            'diff': diff
         }
 
 
@@ -107,8 +169,7 @@ class FloatComparator(ElementComparator):
         return {
             'exact_match': exact_match,
             'precision_diff': precision_diff,
-            'diff': diff,
-            'log': f"exact_match={exact_match}, diff={diff:.6e}"
+            'diff': diff
         }
 
 
@@ -136,8 +197,7 @@ class TensorComparator(ElementComparator):
                 'shape_match': shape_match,
                 'dtype_mismatch': not dtype_match,
                 'shape_mismatch': not shape_match,
-                'content_skipped': True,
-                'log': f"dtype={('match' if dtype_match else 'mismatch')}, shape={('match' if shape_match else 'mismatch')}, content_skipped"
+                'content_skipped': True
             }
         
         # Content comparison
@@ -174,8 +234,7 @@ class TensorComparator(ElementComparator):
             'min_err': min_err,
             'mean_err': mean_err,
             'mse': mse,
-            'cosine': cosine,
-            'log': f"dtype=match, shape=match, exact_match={exact_match}, match_ratio={match_ratio:.4f}, max_err={max_err:.6e}, min_err={min_err:.6e}, mean_err={mean_err:.6e}, mse={mse:.6e}, cosine={cosine:.6f}"
+            'cosine': cosine
         }
 
 
@@ -203,8 +262,7 @@ class UnsupportedComparator(ElementComparator):
     
     def compare(self) -> Dict:
         return {
-            'unsupported': True,
-            'log': "type_unsupported"
+            'unsupported': True
         }
 
 
@@ -240,8 +298,7 @@ class MissingInAComparator(ElementComparator):
     
     def compare(self) -> Dict:
         return {
-            'missing_in_A': True,
-            'log': "missing_in_A"
+            'missing_in_A': True
         }
 
 
@@ -277,8 +334,7 @@ class MissingInBComparator(ElementComparator):
     
     def compare(self) -> Dict:
         return {
-            'missing_in_B': True,
-            'log': "missing_in_B"
+            'missing_in_B': True
         }
 
 
