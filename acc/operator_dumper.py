@@ -11,7 +11,7 @@ import inspect
 from datetime import datetime
 import torch
 from torch.utils._python_dispatch import TorchDispatchMode
-from .serialization import _serialize_value, _sanitize_filename
+from .serialization import _serialize_value, _sanitize_filename, _make_pickle_safe
 
 
 class ops_dump(TorchDispatchMode):
@@ -102,9 +102,14 @@ class ops_dump(TorchDispatchMode):
         dump_filename = f"{self.sequence:06d}_{sanitized_name}_{opname_safe}.pkl"
         dump_path = os.path.join(self.session_dir, dump_filename)
         
-        # Write dump file
-        with open(dump_path, 'wb') as f:
-            pickle.dump(dump_data, f)
+        # Write dump file with error handling
+        try:
+            with open(dump_path, 'wb') as f:
+                pickle.dump(dump_data, f)
+        except Exception as e:
+            print(f"[DUMP ERROR] {self.sequence:06d} | {filename}:{lineno} | {opname} | {e}")
+            self.sequence += 1
+            return
         
         # Log the dump (6-digit sequence)
         print(f"[DUMP] {self.sequence:06d} | {filename}:{lineno} | {opname} | saved to {dump_filename}")
