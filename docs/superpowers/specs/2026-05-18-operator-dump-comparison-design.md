@@ -5,9 +5,9 @@
 
 ## Overview
 
-A single-file implementation providing two independent tools for PyTorch operator debugging:
-- **OperatorDumper**: Capture operator calls with full context
-- **OperatorComparator**: Compare two dump sessions with precision analysis
+A single-file implementation providing two tools for PyTorch operator debugging:
+- **OperatorDumper** (class): Capture operator calls with full context
+- **compare_operator_dumps()** (function): Compare two dump sessions with precision analysis
 
 ## Architecture
 
@@ -18,7 +18,7 @@ operator_tools.py
 │   ├── Creates session directory (path/pid/timestamp)
 │   └── Dumps each op call to separate pickle file
 │
-└── OperatorComparator (standalone tool)
+└── compare_operator_dumps() (standalone function)
     ├── Loads two dump directories
     ├── Finds LCS of operator sequences
     └── Reports comparison metrics
@@ -86,13 +86,12 @@ Each dump file contains:
 
 **Format:** `[DUMP] <sequence> | <filename>:<lineno> | <operator_name> | saved to <filename>`
 
-## OperatorComparator Design
+## compare_operator_dumps Design
 
 ### API
 
 ```python
-comparator = OperatorComparator("/path/to/dump1", "/path/to/dump2")
-comparator.compare()
+compare_operator_dumps("/path/to/dump1", "/path/to/dump2")
 ```
 
 ### Comparison Flow
