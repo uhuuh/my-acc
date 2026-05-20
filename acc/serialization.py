@@ -78,3 +78,26 @@ def _sanitize_filename(filename: str) -> str:
         Sanitized filename safe for file system
     """
     return filename.replace('/', '_').replace('\\', '_').replace('.py', '')
+
+
+def _serialize_inputs(args, kwargs):
+    """
+    Serialize inputs to list for PKL storage.
+    
+    Returns:
+        List of input data (tensors on CPU)
+    """
+    data_list = []
+    
+    for arg in args:
+        if isinstance(arg, torch.Tensor):
+            data_list.append(arg.detach().cpu())
+        elif isinstance(arg, np.ndarray):
+            data_list.append(arg)
+        else:
+            data_list.append(arg)
+    
+    if kwargs:
+        data_list.append(kwargs)
+    
+    return data_list
