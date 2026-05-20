@@ -79,10 +79,14 @@ def format_comparison_log(result: Dict) -> str:
         else:
             return f"exact_match={exact}, diff={diff}"
     
+    if 'str_a' in result and 'str_b' in result:
+        return f"exact_match={result['exact_match']}"
+    
     if 'dtype_match' in result and 'shape_match' in result:
-        # Tensor comparison
         parts = []
-        parts.append(f"dtype=match, shape=match")
+        dtype_status = 'match' if result['dtype_match'] else 'mismatch'
+        shape_status = 'match' if result['shape_match'] else 'mismatch'
+        parts.append(f"dtype={dtype_status}, shape={shape_status}")
         parts.append(f"exact_match={result.get('exact_match', False)}")
         
         if 'match_ratio' in result:
@@ -257,20 +261,18 @@ class UnsupportedComparator(ElementComparator):
     """Compare unsupported types."""
     
     def get_type_info(self) -> Tuple[str, str]:
-        def format_info(obj):
-            type_name = type(obj).__name__
-            if isinstance(obj, (list, tuple)):
-                return f"{type_name}(len={len(obj)})"
-            elif isinstance(obj, dict):
-                return f"dict(len={len(obj)})"
-            else:
-                return f"{type_name}({repr(obj)[:50]})"
-        
-        return format_info(self.a), format_info(self.b)
+        return str(self.a), str(self.b)
     
     def compare(self) -> Dict:
+        try:
+            exact_match = self.a == self.b
+        except Exception:
+            exact_match = False
+        
         return {
-            'unsupported': True
+            'exact_match': exact_match,
+            'str_a': str(self.a),
+            'str_b': str(self.b)
         }
 
 
