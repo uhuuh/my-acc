@@ -227,7 +227,7 @@ class TensorComparator(ElementComparator):
         
         if total_count > 0 and a_float.norm() > 0 and b_float.norm() > 0:
             cosine = torch.nn.functional.cosine_similarity(
-                a_float.unsqueeze(0), b_float.unsqueeze(0)
+                a_float.view(1, -1), b_float.view(1, -1)
             ).item()
         else:
             cosine = 1.0
