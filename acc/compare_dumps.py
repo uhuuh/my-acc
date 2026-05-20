@@ -85,17 +85,20 @@ def ops_comp(dump_dir_a: str, dump_dir_b: str):
     matched_map_a = {idx_a: idx_b for idx_a, idx_b in matched_pairs}
     matched_map_b = {idx_b: idx_a for idx_a, idx_b in matched_pairs}
     
-    # Log matches and skips
     for i, dump in enumerate(dumps_a):
         if i in matched_map_a:
             match_idx = matched_map_a[i]
-            print(f"[MATCH] A:{dump['sequence']:06d}_{dump['filename']}_{dump['opname']} <-> B:{dumps_b[match_idx]['sequence']:06d}_{dumps_b[match_idx]['filename']}_{dumps_b[match_idx]['opname']}")
+            key_a = f"{dump['filename']}({dump['opname']})"
+            key_b = f"{dumps_b[match_idx]['filename']}({dumps_b[match_idx]['opname']})"
+            print(f"[MATCH] {key_a} <-> {key_b}")
         else:
-            print(f"[SKIP] A:{dump['sequence']:06d}_{dump['filename']}_{dump['opname']} (no match in B)")
-    
+            key = f"{dump['filename']}({dump['opname']})"
+            print(f"[SKIP] {key} (no match in B)")
+
     for j, dump in enumerate(dumps_b):
         if j not in matched_map_b:
-            print(f"[SKIP] B:{dump['sequence']:06d}_{dump['filename']}_{dump['opname']} (no match in A)")
+            key = f"{dump['filename']}({dump['opname']})"
+            print(f"[SKIP] {key} (no match in A)")
     
     # Phase 2: Detailed comparison
     print(f"[COMPARE] Starting detailed comparison of {lcs_len} matched pairs...")
@@ -104,8 +107,13 @@ def ops_comp(dump_dir_a: str, dump_dir_b: str):
         dump_a = dumps_a[idx_a]
         dump_b = dumps_b[idx_b]
         
-        op_id = f"{dump_a['sequence']:06d}_{dump_a['filename']}_{dump_a['opname']}"
-        print(f"[COMPARE] {op_id}:")
+        filename_safe = dump_a['filename'].replace('.py', '').replace('/', '_').replace('\\', '_')
+        func_name = dump_a['function']
+        opname_safe = dump_a['opname'].replace('.', '_').replace('::', '_')
+        
+        dump_filename = f"{dump_a['sequence']:06d}__{filename_safe}__{func_name}__{opname_safe}.json"
+        
+        print(f"[COMPARE] {dump_filename}")
         
         # Compare inputs
         inputs_a = dump_a['inputs']
