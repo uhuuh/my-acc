@@ -4,6 +4,7 @@ Operator Dumps Comparison for PyTorch Operator Dump Tool.
 Provides ops_comp function for comparing two dump sessions.
 """
 
+import json
 import os
 import pickle
 from typing import List, Dict
@@ -19,19 +20,35 @@ from .comparison_utils import (
 def _load_dumps(dump_dir: str) -> List[Dict]:
     """
     Load all dump files from directory.
-    
-    Args:
-        dump_dir: Path to dump directory
-    
-    Returns:
-        List of dump data sorted by sequence
+    Each dump has .json (metadata) and .pkl (input data list).
     """
     dumps = []
+    
     for filename in os.listdir(dump_dir):
-        if filename.endswith('.pkl'):
-            filepath = os.path.join(dump_dir, filename)
-            with open(filepath, 'rb') as f:
-                dumps.append(pickle.load(f))
+        if filename.endswith('.json'):
+            json_path = os.path.join(dump_dir, filename)
+            pkl_path = json_path.replace('.json', '.pkl')
+            
+            with open(json_path, 'r') as f:
+                metadata = json.load(f)
+            
+            inputs = []
+            if os.path.exists(pkl_path):
+                with open(pkl_path, 'rb') as f:
+                    inputs = pickle.load(f)
+            
+            dump_data = {
+                'sequence': metadata['sequence'],
+                'filepath': metadata.get('filepath', ''),
+                'filename': metadata['filename'],
+                'function': metadata['function'],
+                'lineno': metadata.get('lineno', 0),
+                'opname': metadata['opname'],
+                'call_stack': metadata.get('call_stack', ''),
+                'inputs': inputs
+            }
+            
+            dumps.append(dump_data)
     
     dumps.sort(key=lambda x: x['sequence'])
     return dumps
