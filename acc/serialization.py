@@ -1,103 +1,74 @@
 """
-Serialization helpers for PyTorch Operator Dump Tool.
-
-Provides functions to convert tensors to CPU and serialize values.
+Serialization helpers and data structures for PyTorch Operator Dump Tool.
 """
 
-import pickle
 import torch
-import numpy as np
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, List, Dict
 
 
-def _tensor_to_cpu(obj: Any) -> Any:
-    """Convert tensors to CPU, handle numpy arrays.
-    
-    Args:
-        obj: Object to convert (tensor, numpy array, or container)
-    
-    Returns:
-        Object with tensors moved to CPU
-    """
-    if isinstance(obj, torch.Tensor):
-        return obj.detach().cpu()
-    elif isinstance(obj, np.ndarray):
-        return obj
-    elif isinstance(obj, (list, tuple)):
-        return type(obj)(_tensor_to_cpu(item) for item in obj)
-    elif isinstance(obj, dict):
-        return {k: _tensor_to_cpu(v) for k, v in obj.items()}
-    else:
-        return obj
+@dataclass
+class OperatorDump:
+    """Data structure for a single operator dump."""
+    sequence: int
+    filepath: str
+    filename: str
+    function: str
+    lineno: int
+    opname: str
+    call_stack: List[Dict]
+    inputs: List[Any] = field(default_factory=list)
+    outputs: List[Any] = field(default_factory=list)
 
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'OperatorDump':
+        """Create OperatorDump from dictionary."""
+        return cls(
+            sequence=data['sequence'],
+            filepath=data.get('filepath', ''),
+            filename=data['filename'],
+            function=data['function'],
+            lineno=data.get('lineno', 0),
+            opname=data['opname'],
+            call_stack=data.get('call_stack', []),
+            inputs=data.get('inputs', []),
+            outputs=data.get('outputs', [])
+        )
 
-def _make_pickle_safe(obj: Any) -> Any:
-    """Convert unpicklable objects to safe representations.
-    
-    Args:
-        obj: Object to make pickle-safe
-    
-    Returns:
-        Object safe for pickling
-    """
-    if isinstance(obj, torch.Tensor):
-        return obj.detach().cpu()
-    elif isinstance(obj, np.ndarray):
-        return obj
-    elif isinstance(obj, (list, tuple)):
-        return type(obj)(_make_pickle_safe(item) for item in obj)
-    elif isinstance(obj, dict):
-        return {k: _make_pickle_safe(v) for k, v in obj.items()}
-    else:
-        try:
-            pickle.dumps(obj)
-            return obj
-        except (TypeError, AttributeError, RuntimeError):
-            return f"<unpicklable:{type(obj).__name__}>"
-
-
-def _serialize_value(obj: Any) -> Any:
-    """Serialize object with tensors moved to CPU and unpicklables converted.
-    
-    Args:
-        obj: Object to serialize
-    
-    Returns:
-        Serialized object safe for pickling
-    """
-    return _make_pickle_safe(obj)
+    def to_dict(self) -> Dict:
+        """Convert OperatorDump to dictionary (for JSON, without inputs/outputs)."""
+        return {
+            'sequence': self.sequence,
+            'filepath': self.filepath,
+            'filename': self.filename,
+            'function': self.function,
+            'lineno': self.lineno,
+            'opname': self.opname,
+            'call_stack': self.call_stack
+        }
 
 
 def _sanitize_filename(filename: str) -> str:
-    """Sanitize filename for dump file naming.
-    
-    Args:
-        filename: Original filename
-    
-    Returns:
-        Sanitized filename safe for file system
-    """
+    """Sanitize filename for dump file naming."""
     return filename.replace('/', '_').replace('\\', '_').replace('.py', '')
 
 
+def _sanitize_opname(opname: str) -> str:
+    """Sanitize opname for dump file naming."""
+    return opname.replace('.', '_').replace('::', '_')
+
+
 def _serialize_inputs(args, kwargs):
-    """
-    Serialize inputs to list for PKL storage.
-    
-    Returns:
-        List of input data (tensors on CPU)
-    """
+    """Serialize inputs to list for PKL storage."""
     data_list = []
-    
+
     for arg in args:
         if isinstance(arg, torch.Tensor):
             data_list.append(arg.detach().cpu())
-        elif isinstance(arg, np.ndarray):
-            data_list.append(arg)
         else:
             data_list.append(arg)
-    
+
     if kwargs:
         data_list.append(kwargs)
-    
+
     return data_list
