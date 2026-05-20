@@ -8,8 +8,10 @@ import os
 import pickle
 import traceback
 import inspect
+import uuid
 from datetime import datetime
 import torch
+import torch.distributed as dist
 from torch.utils._python_dispatch import TorchDispatchMode
 from .serialization import _serialize_value, _sanitize_filename, _make_pickle_safe
 
@@ -31,10 +33,21 @@ class ops_dump(TorchDispatchMode):
     
     def __enter__(self):
         """Enter context manager, create session directory."""
+        if dist.is_initialized():
+            rank = dist.get_rank()
+        else:
+            rank = "None"
+        
         pid = os.getpid()
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        self.session_dir = os.path.join(self.dump_path, f"{pid}_{timestamp}")
-        os.makedirs(self.session_dir, exist_ok=True)
+        timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        session_id = uuid.uuid4().hex[:8]
+        
+        self.session_dir = os.path.join(
+            self.dump_path,
+            f"{rank}-{pid}-{timestamp}-{session_id}"
+        )
+        
+        os.makedirs(self.session_dir, exist_ok=False)
         self.sequence = 0
         self._active = True
         print(f"[DUMP] Created session directory: {self.session_dir}")
