@@ -7,13 +7,12 @@ Provides ops_dump class for capturing operator calls.
 import os
 import pickle
 import traceback
-import inspect
 import uuid
 from datetime import datetime
 import torch
 import torch.distributed as dist
 from torch.utils._python_dispatch import TorchDispatchMode
-from .serialization import _serialize_value, _sanitize_filename, _make_pickle_safe
+from .serialization import _serialize_inputs, _sanitize_filename
 
 
 class ops_dump(TorchDispatchMode):
@@ -76,57 +75,57 @@ class ops_dump(TorchDispatchMode):
     
     def _dump_operation(self, func, args, kwargs, result):
         """Dump a single operator call."""
-        # Get full call stack (no frame skipping)
-        call_stack = ''.join(traceback.format_stack())
+        import json
         
-        # Extract caller info from call stack (use last frame before operator_dumper.py)
         stack = traceback.extract_stack()
-        filename = "unknown"
+        
+        filepath = ""
+        filename = "<global>"
+        func_name = ""
         lineno = 0
         
-        # Find first frame that's not operator_dumper.py (from the end)
         for frame_info in reversed(stack):
             if not frame_info.filename.endswith('operator_dumper.py'):
+                filepath = frame_info.filename
                 filename = os.path.basename(frame_info.filename)
+                func_name = frame_info.name
                 lineno = frame_info.lineno
                 break
         
-        # Get operator name
-        opname = str(func)
+        call_stack = ''.join(traceback.format_stack())
         
-        # Serialize inputs (no outputs)
-        inputs = [_serialize_value(arg) for arg in args]
-        if kwargs:
-            inputs.append(_serialize_value(kwargs))
+        filename_safe = _sanitize_filename(filename)
+        opname_safe = str(func).replace('.', '_').replace('::', '_')
         
-        # Create dump data (no outputs)
-        dump_data = {
+        data_list = _serialize_inputs(args, kwargs)
+        
+        json_data = {
             'sequence': self.sequence,
+            'filepath': filepath,
             'filename': filename,
+            'function': func_name,
             'lineno': lineno,
-            'opname': opname,
-            'call_stack': call_stack,
-            'inputs': inputs
+            'opname': str(func),
+            'call_stack': call_stack
         }
         
-        # Create dump filename (6-digit sequence)
-        sanitized_name = _sanitize_filename(filename)
-        opname_safe = opname.replace('.', '_').replace('::', '_')
-        dump_filename = f"{self.sequence:06d}_{sanitized_name}_{opname_safe}.pkl"
-        dump_path = os.path.join(self.session_dir, dump_filename)
+        json_filename = f"{self.sequence:06d}__{filename_safe}__{func_name}__{opname_safe}.json"
+        pkl_filename = f"{self.sequence:06d}__{filename_safe}__{func_name}__{opname_safe}.pkl"
         
-        # Write dump file with error handling
+        json_path = os.path.join(self.session_dir, json_filename)
+        pkl_path = os.path.join(self.session_dir, pkl_filename)
+        
         try:
-            with open(dump_path, 'wb') as f:
-                pickle.dump(dump_data, f)
+            with open(json_path, 'w') as f:
+                json.dump(json_data, f, indent=2)
+            with open(pkl_path, 'wb') as f:
+                pickle.dump(data_list, f)
         except Exception as e:
-            print(f"[DUMP ERROR] {self.sequence:06d} | {filename}:{lineno} | {opname} | {e}")
+            print(f"[DUMP ERROR] {self.sequence:06d} | {filename}:{lineno} | {func} | {e}")
             self.sequence += 1
             return
         
-        # Log the dump (6-digit sequence)
-        print(f"[DUMP] {self.sequence:06d} | {filename}:{lineno} | {opname} | saved to {dump_filename}")
-        
+        print(f"[DUMP] {self.sequence:06d} | {filename}:{lineno} | {func} | saved to {json_filename}")
         self.sequence += 1
     
     def __call__(self, func):
