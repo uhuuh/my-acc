@@ -83,41 +83,54 @@ def __enter__(self):
 **Implementation in `operator_dumper.py`:**
 ```python
 def _dump_operation(self, func, args, kwargs, result):
+    import json
+    import traceback
+    
     stack = traceback.extract_stack()
     
-    # Find caller frame
+    filepath = ""
     filename = "<global>"
     func_name = ""
     lineno = 0
     
     for frame_info in reversed(stack):
         if not frame_info.filename.endswith('operator_dumper.py'):
+            filepath = frame_info.filename
             filename = os.path.basename(frame_info.filename)
             func_name = frame_info.name
             lineno = frame_info.lineno
             break
     
-    # Sanitize for filename
+    call_stack = ''.join(traceback.format_stack())
+    
     filename_safe = filename.replace('.py', '').replace('/', '_').replace('\\', '_')
     opname_safe = str(func).replace('.', '_').replace('::', '_')
     
-    # Generate IDs for tensors
-    tensor_ids = {}
-    inputs_with_ids = self._add_tensor_ids(args, tensor_ids)
+    data_list = _serialize_inputs(args, kwargs)
     
-    # JSON file
     json_data = {
         'sequence': self.sequence,
+        'filepath': filepath,
         'filename': filename,
         'function': func_name,
         'lineno': lineno,
         'opname': str(func),
-        'call_stack': ''.join(traceback.format_stack()),
-        'inputs': inputs_with_ids
+        'call_stack': call_stack
     }
     
     json_filename = f"{self.sequence:06d}__{filename_safe}__{func_name}__{opname_safe}.json"
     pkl_filename = f"{self.sequence:06d}__{filename_safe}__{func_name}__{opname_safe}.pkl"
+    
+    json_path = os.path.join(self.session_dir, json_filename)
+    pkl_path = os.path.join(self.session_dir, pkl_filename)
+    
+    with open(json_path, 'w') as f:
+        json.dump(json_data, f, indent=2)
+    with open(pkl_path, 'wb') as f:
+        pickle.dump(data_list, f)
+    
+    print(f"[DUMP] {self.sequence:06d} | {filename}:{lineno} | {func} | saved to {json_filename}")
+    self.sequence += 1
 ```
 
 ### 3. JSON/PKL Split for Dump Files
@@ -126,86 +139,54 @@ def _dump_operation(self, func, args, kwargs, result):
 ```json
 {
   "sequence": 1,
+  "filepath": "/path/to/models/transformer.py",
   "filename": "transformer.py",
   "function": "forward",
   "lineno": 42,
   "opname": "torch.add",
-  "call_stack": "Traceback (most recent call last):\n  File ...",
-  "inputs": [
-    {"type": "tensor", "id": "a1b2c3d4"},
-    {"type": "int", "id": "e5f6g7h8"},
-    {"type": "float", "id": "i9j0k1l2"}
-  ]
+  "call_stack": "Traceback (most recent call last):\n  File ...\n    ...\n"
 }
 ```
 
 **PKL File Content:**
 ```python
-{
-    "a1b2c3d4": tensor_cpu_data,
-    "e5f6g7h8": 42,
-    "i9j0k1l2": 3.14,
-    "m3n4o5p6": str_data,
-    "q7r8s9t0": None
-}
+[
+    tensor_cpu_data,
+    42,
+    3.14
+]
 ```
 
 **Data Storage Rules:**
-- JSON: only `type` and `id` fields for each input
-- PKL: stores all actual data with ID as key
-- 8-char random hex ID per value: `uuid.uuid4().hex[:8]`
+- JSON: only metadata (no input information)
+- PKL: direct list of all input data
 
 **Implementation in `serialization.py`:**
 ```python
-import uuid
-import json
-import pickle
-
-def _generate_id():
-    return uuid.uuid4().hex[:8]
-
-def _serialize_to_json_pkl(obj):
+def _serialize_inputs(args, kwargs):
     """
-    Split object into JSON metadata (type + id) and PKL data.
+    Serialize inputs to list for PKL storage.
     
     Returns:
-        Tuple of (json_data, pkl_data)
+        List of input data (tensors on CPU)
     """
-    pkl_data = {}
+    import torch
+    import numpy as np
     
-    def process_value(value):
-        id = _generate_id()
-        
-        if isinstance(value, torch.Tensor):
-            pkl_data[id] = value.detach().cpu()
-            return {'type': 'tensor', 'id': id}
-        elif isinstance(value, np.ndarray):
-            pkl_data[id] = value
-            return {'type': 'numpy', 'id': id}
-        elif isinstance(value, int):
-            pkl_data[id] = value
-            return {'type': 'int', 'id': id}
-        elif isinstance(value, float):
-            pkl_data[id] = value
-            return {'type': 'float', 'id': id}
-        elif isinstance(value, str):
-            pkl_data[id] = value
-            return {'type': 'str', 'id': id}
-        elif value is None:
-            pkl_data[id] = None
-            return {'type': 'None', 'id': id}
-        elif isinstance(value, (list, tuple)):
-            pkl_data[id] = value
-            return {'type': type(value).__name__, 'id': id}
-        elif isinstance(value, dict):
-            pkl_data[id] = value
-            return {'type': 'dict', 'id': id}
+    data_list = []
+    
+    for arg in args:
+        if isinstance(arg, torch.Tensor):
+            data_list.append(arg.detach().cpu())
+        elif isinstance(arg, numpy.ndarray):
+            data_list.append(arg)
         else:
-            pkl_data[id] = value
-            return {'type': 'generic', 'id': id}
+            data_list.append(arg)
     
-    json_data = process_value(obj)
-    return json_data, pkl_data
+    if kwargs:
+        data_list.append(kwargs)
+    
+    return data_list
 ```
 
 ### 4. Scalar Tensor Handling
@@ -327,23 +308,23 @@ Inputs[0] | "list([1, 2, 3])" | "list([1, 2, 4])" | exact_match=False
 
 **Comparison Header Format:**
 ```
-[COMPARE] A:{seq:06d}__{file}__{func}__{op} <-> B:{seq:06d}__{file}__{func}__{op}:
+[COMPARE] {dump_filename}
 ```
 
 **Example:**
 ```
-[COMPARE] A:000001__transformer__forward__torch_add <-> B:000002__transformer__forward__torch_add:
+[COMPARE] 000001__transformer__forward__torch_add.json
   Inputs[0] | tensor(dtype=float32, shape=[32,64]) | tensor(dtype=float32, shape=[32,64]) | exact_match=True
 ```
 
 **MATCH Log:**
 ```
-[MATCH] A:000001__transformer__forward__torch_add <-> B:000002__transformer__forward__torch_add
+[MATCH] transformer.py(torch.add) <-> transformer.py(torch.add)
 ```
 
 **SKIP Log:**
 ```
-[SKIP] A:000003__transformer__forward__torch_dropout (no match in B)
+[SKIP] transformer.py(torch.dropout) (no match in B)
 ```
 
 **Implementation in `compare_dumps.py`:**
@@ -357,15 +338,53 @@ def ops_comp(dump_dir_a: str, dump_dir_b: str):
     sigs_a = [f"{d['filename']}::{d['function']}::{d['opname']}" for d in dumps_a]
     sigs_b = [f"{d['filename']}::{d['function']}::{d['opname']}" for d in dumps_b]
     
-    # Format comparison header
+    # Match and skip logs
+    for i, dump in enumerate(dumps_a):
+        if i in matched_map_a:
+            match_idx = matched_map_a[i]
+            key_a = f"{dump['filename']}({dump['opname']})"
+            key_b = f"{dumps_b[match_idx]['filename']}({dumps_b[match_idx]['opname']})"
+            print(f"[MATCH] {key_a} <-> {key_b}")
+        else:
+            key = f"{dump['filename']}({dump['opname']})"
+            print(f"[SKIP] {key} (no match in B)")
+    
+    for j, dump in enumerate(dumps_b):
+        if j not in matched_map_b:
+            key = f"{dump['filename']}({dump['opname']})"
+            print(f"[SKIP] {key} (no match in A)")
+    
+    # Comparison
     for idx_a, idx_b in matched_pairs:
         dump_a = dumps_a[idx_a]
         dump_b = dumps_b[idx_b]
         
-        header_a = f"{dump_a['sequence']:06d}__{dump_a['filename'].replace('.py', '')}__{dump_a['function']}__{dump_a['opname'].replace('.', '_').replace('::', '_')}"
-        header_b = f"{dump_b['sequence']:06d}__{dump_b['filename'].replace('.py', '')}__{dump_b['function']}__{dump_b['opname'].replace('.', '_').replace('::', '_')}"
+        filename_safe = dump_a['filename'].replace('.py', '').replace('/', '_').replace('\\', '_')
+        func_name = dump_a['function']
+        opname_safe = dump_a['opname'].replace('.', '_').replace('::', '_')
         
-        print(f"[COMPARE] A:{header_a} <-> B:{header_b}:")
+        dump_filename = f"{dump_a['sequence']:06d}__{filename_safe}__{func_name}__{opname_safe}.json"
+        
+        print(f"[COMPARE] {dump_filename}")
+        
+        # Compare inputs
+        inputs_a = dump_a['inputs']
+        inputs_b = dump_b['inputs']
+        
+        max_inputs = max(len(inputs_a), len(inputs_b))
+        
+        for i in range(max_inputs):
+            if i >= len(inputs_a):
+                comparator = MissingInAComparator(inputs_b[i])
+            elif i >= len(inputs_b):
+                comparator = MissingInBComparator(inputs_a[i])
+            else:
+                comparator = create_comparator(inputs_a[i], inputs_b[i])
+            
+            left_info, right_info = comparator.get_type_info()
+            result = comparator.compare()
+            log = format_comparison_log(result)
+            print(f"  Inputs[{i}] | {left_info} | {right_info} | {log}")
 ```
 
 ### 8. Loading JSON/PKL Split Files
@@ -375,7 +394,7 @@ def ops_comp(dump_dir_a: str, dump_dir_b: str):
 def _load_dumps(dump_dir: str) -> List[Dict]:
     """
     Load all dump files from directory.
-    Each dump has .json (metadata) and .pkl (actual data).
+    Each dump has .json (metadata) and .pkl (input data list).
     """
     dumps = []
     
@@ -384,21 +403,17 @@ def _load_dumps(dump_dir: str) -> List[Dict]:
             json_path = os.path.join(dump_dir, filename)
             pkl_path = json_path.replace('.json', '.pkl')
             
-            # Load JSON metadata
             with open(json_path, 'r') as f:
                 metadata = json.load(f)
             
-            # Load PKL actual data
-            pkl_data = {}
+            inputs = []
             if os.path.exists(pkl_path):
                 with open(pkl_path, 'rb') as f:
-                    pkl_data = pickle.load(f)
-            
-            # Reconstruct inputs with actual data
-            inputs = [_reconstruct_values(inp, pkl_data) for inp in metadata['inputs']]
+                    inputs = pickle.load(f)
             
             dump_data = {
                 'sequence': metadata['sequence'],
+                'filepath': metadata.get('filepath', ''),
                 'filename': metadata['filename'],
                 'function': metadata['function'],
                 'lineno': metadata.get('lineno', 0),
@@ -411,11 +426,6 @@ def _load_dumps(dump_dir: str) -> List[Dict]:
     
     dumps.sort(key=lambda x: x['sequence'])
     return dumps
-
-def _reconstruct_values(json_data, pkl_data):
-    """Reconstruct values from JSON metadata and PKL data."""
-    id = json_data['id']
-    return pkl_data[id]
 ```
 
 ## File Changes Summary
