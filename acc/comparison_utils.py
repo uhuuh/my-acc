@@ -177,47 +177,53 @@ class TensorComparator(ElementComparator):
     """Compare two tensors."""
     
     def get_type_info(self) -> Tuple[str, str]:
-        a_dtype = self.a.dtype if isinstance(self.a, torch.Tensor) else self.a.dtype
-        a_shape = list(self.a.shape)
-        b_dtype = self.b.dtype if isinstance(self.b, torch.Tensor) else self.b.dtype
-        b_shape = list(self.b.shape)
-        return f"tensor(dtype={a_dtype}, shape={a_shape})", f"tensor(dtype={b_dtype}, shape={b_shape})"
+        dtype_a = str(self.a.dtype)
+        shape_a = list(self.a.shape)
+        dtype_b = str(self.b.dtype)
+        shape_b = list(self.b.shape)
+        return f"tensor(dtype={dtype_a}, shape={shape_a})", f"tensor(dtype={dtype_b}, shape={shape_b})"
     
     def compare(self) -> Dict:
-        # Convert numpy to tensor if needed
         a = torch.from_numpy(self.a) if isinstance(self.a, np.ndarray) else self.a
         b = torch.from_numpy(self.b) if isinstance(self.b, np.ndarray) else self.b
+        
+        dtype_a_original = a.dtype
+        dtype_b_original = b.dtype
         
         dtype_match = a.dtype == b.dtype
         shape_match = a.shape == b.shape
         
-        if not dtype_match or not shape_match:
+        if a.ndim == 0:
+            a = a.unsqueeze(0)
+        if b.ndim == 0:
+            b = b.unsqueeze(0)
+        
+        if not shape_match:
             return {
                 'dtype_match': dtype_match,
-                'shape_match': shape_match,
-                'dtype_mismatch': not dtype_match,
-                'shape_mismatch': not shape_match,
+                'shape_match': False,
+                'dtype_original_a': str(dtype_a_original),
+                'dtype_original_b': str(dtype_b_original),
                 'content_skipped': True
             }
         
-        # Content comparison
-        a_flat = a.flatten().float()
-        b_flat = b.flatten().float()
+        a_float = a.float()
+        b_float = b.float()
         
-        exact_match = torch.allclose(a, b, rtol=0, atol=0)
-        match_count = (a == b).sum().item()
-        total_count = a.numel()
+        exact_match = torch.allclose(a_float, b_float, rtol=0, atol=0)
+        match_count = (a_float == b_float).sum().item()
+        total_count = a_float.numel()
         match_ratio = match_count / total_count if total_count > 0 else 1.0
         
-        diff = torch.abs(a_flat - b_flat)
+        diff = torch.abs(a_float - b_float)
         max_err = diff.max().item()
         min_err = diff.min().item()
         mean_err = diff.mean().item()
-        mse = torch.mean((a_flat - b_flat) ** 2).item()
+        mse = torch.mean((a_float - b_float) ** 2).item()
         
-        if total_count > 0 and a_flat.norm() > 0 and b_flat.norm() > 0:
+        if total_count > 0 and a_float.norm() > 0 and b_float.norm() > 0:
             cosine = torch.nn.functional.cosine_similarity(
-                a_flat.unsqueeze(0), b_flat.unsqueeze(0)
+                a_float.unsqueeze(0), b_float.unsqueeze(0)
             ).item()
         else:
             cosine = 1.0
@@ -227,6 +233,8 @@ class TensorComparator(ElementComparator):
         return {
             'dtype_match': dtype_match,
             'shape_match': shape_match,
+            'dtype_original_a': str(dtype_a_original),
+            'dtype_original_b': str(dtype_b_original),
             'exact_match': exact_match,
             'precision_diff': precision_diff,
             'match_ratio': match_ratio,
