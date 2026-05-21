@@ -27,18 +27,18 @@ def get_opnames_from_dump(session_dir):
 
 
 # ============================================================
-# Test 1: torch.library with CompositeExplicitAutograd (No Decomposition)
+# Test 1: torch.library with CompositeExplicitAutograd (Now with wrap)
 # ============================================================
 
 def test_torch_library_explicit_autograd():
     """
-    Test CompositeExplicitAutograd operator - internal ops NOT captured.
+    Test CompositeExplicitAutograd operator - internal ops ARE captured now.
 
-    CompositeExplicitAutograd provides explicit backward formula.
-    Internal operators do NOT decompose through dispatch mode.
+    After implementing the wrap approach, all custom operators (regardless of
+    dispatch key) will capture internal operators via nested dispatch mode.
     """
     print("=" * 60)
-    print("Test 1: torch.library CompositeExplicitAutograd (No Decomposition)")
+    print("Test 1: torch.library CompositeExplicitAutograd (Wrapped)")
     print("=" * 60)
 
     try:
@@ -51,7 +51,7 @@ def test_torch_library_explicit_autograd():
         # 实现自定义算子 - 使用 CompositeExplicitAutograd
         @torch.library.impl("explicit_ops::custom_add", "CompositeExplicitAutograd")
         def custom_add_impl(a, b):
-            # 内部调用多个原生算子，但不会被单独捕获
+            # 内部调用多个原生算子
             y = torch.add(a, b)
             y = torch.mul(y, 2.0)
             y = torch.relu(y)
@@ -71,20 +71,21 @@ def test_torch_library_explicit_autograd():
 
             print(f"Captured {len(opnames)} operators: {opnames}")
 
-            # CompositeExplicitAutograd 只捕获算子本身，不捕获内部算子
-            assert len(opnames) >= 1, "Should capture at least the custom operator"
+            # 现在 CompositeExplicitAutograd 也捕获内部算子
+            assert len(opnames) >= 4, "Should capture at least 4 operators (add, mul, relu, custom)"
 
             # 验证捕获了自定义算子
             custom_op_found = any('custom_add' in op.lower() for op in opnames)
             print(f"Custom operator captured: {custom_op_found}")
 
-            # 验证内部算子没有被单独捕获（这是预期行为）
-            # 注意：需要检查 aten.xxx 格式，而不是自定义算子名中的匹配
-            internal_aten_ops = ['aten.add', 'aten.mul', 'aten.relu']
-            internal_found = [op for op in internal_aten_ops if any(op in o.lower() for o in opnames)]
-            print(f"Internal aten operators found (expected empty): {internal_found}")
-            assert len(internal_found) == 0, f"Internal operators should NOT be captured in CompositeExplicitAutograd: {internal_found}"
-            print("PASS: CompositeExplicitAutograd behaves as expected (no decomposition)\n")
+            # 验证内部算子被捕获（新行为）
+            expected_ops = ['add', 'mul', 'relu']
+            for expected in expected_ops:
+                found = any(expected in op.lower() for op in opnames)
+                assert found, f"Expected {expected} operator not found"
+                print(f"PASS: Found {expected}")
+
+            print("PASS: CompositeExplicitAutograd internal operators captured via wrap\n")
 
     except Exception as e:
         print(f"SKIP: CompositeExplicitAutograd test - {e}\n")
