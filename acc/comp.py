@@ -76,35 +76,23 @@ def _load_dumps(dump_dir: str) -> List[OperatorDump]:
             with open(json_path, 'r') as f:
                 metadata = json.load(f)
 
-            inputs = []
-            outputs = []
-            if os.path.exists(pkl_path):
-                with open(pkl_path, 'rb') as f:
-                    pkl_data = pickle.load(f)
+            with open(pkl_path, 'rb') as f:
+                pkl_data = pickle.load(f)
 
-                # Extract inputs and outputs from PKL data
-                if isinstance(pkl_data, list) and len(pkl_data) > 0:
-                    # Last item may contain outputs
-                    last_item = pkl_data[-1]
-                    if isinstance(last_item, dict) and 'outputs' in last_item:
-                        outputs = last_item['outputs']
-                        inputs = pkl_data[:-1]  # Everything except last item
-                    else:
-                        inputs = pkl_data
+            inputs = pkl_data[:-1]
+            outputs = pkl_data[-1]['outputs']
 
-            dump_data = {
-                'sequence': metadata['sequence'],
-                'filepath': metadata.get('filepath', ''),
-                'filename': metadata['filename'],
-                'function': metadata['function'],
-                'lineno': metadata.get('lineno', 0),
-                'opname': metadata['opname'],
-                'call_stack': metadata.get('call_stack', []),
-                'inputs': inputs,
-                'outputs': outputs
-            }
-
-            dumps.append(OperatorDump.from_dict(dump_data))
+            dumps.append(OperatorDump(
+                sequence=metadata['sequence'],
+                filepath=metadata.get('filepath', ''),
+                filename=metadata['filename'],
+                function=metadata['function'],
+                lineno=metadata.get('lineno', 0),
+                opname=metadata['opname'],
+                call_stack=metadata.get('call_stack', []),
+                inputs=inputs,
+                outputs=outputs
+            ))
 
     dumps.sort(key=lambda x: x.sequence)
     return dumps
@@ -131,11 +119,10 @@ def _compare_lists(list_a: List, list_b: List, label: str):
 def _find_lcs_matches(dumps_a: List[OperatorDump], dumps_b: List[OperatorDump]) -> List[Tuple[int, int]]:
     """
     Find LCS matches between two dump lists and print matching info.
-    Display is based on left (A) side order.
 
     Args:
-        dumps_a: First dump list (left side, reference)
-        dumps_b: Second dump list (right side)
+        dumps_a: First dump list
+        dumps_b: Second dump list
 
     Returns:
         List of matched pairs (idx_a, idx_b)
@@ -149,43 +136,33 @@ def _find_lcs_matches(dumps_a: List[OperatorDump], dumps_b: List[OperatorDump]) 
     b_only = len(dumps_b) - lcs_len
     print(f"[LCS] Matched: {lcs_len} operators | A-only: {a_only} | B-only: {b_only}")
 
-    matched_map_a = {idx_a: idx_b for idx_a, idx_b in matched_pairs}
-    matched_map_b = {idx_b: idx_a for idx_a, idx_b in matched_pairs}
+    prev_a, prev_b = 0, 0
+    for idx_a, idx_b in matched_pairs:
+        # 不匹配部分：先打印 A 信息，再打印 B 信息
+        for i in range(prev_a, idx_a):
+            key_a = format_display_key(dumps_a[i])
+            print(f"[SKIP] A[{i}] {key_a} <-> <empty>")
 
-    # Track which B elements have been shown
-    shown_b_indices = set()
+        for j in range(prev_b, idx_b):
+            key_b = format_display_key(dumps_b[j])
+            print(f"[SKIP] <empty> <-> B[{j}] {key_b}")
 
-    # Display based on left (A) side order
-    for i, dump_a in enumerate(dumps_a):
-        key_a = format_display_key(dump_a)
+        # 配对部分：打印配对信息
+        key_a = format_display_key(dumps_a[idx_a])
+        key_b = format_display_key(dumps_b[idx_b])
+        print(f"[MATCH] A[{idx_a}] {key_a} <-> B[{idx_b}] {key_b}")
 
-        if i in matched_map_a:
-            # A matches B - show MATCH and advance
-            match_idx = matched_map_a[i]
-            key_b = format_display_key(dumps_b[match_idx])
-            print(f"[MATCH] A[{i}] {key_a} <-> B[{match_idx}] {key_b}")
-            shown_b_indices.add(match_idx)
-        else:
-            # A has no match in B - show SKIP with left content
-            # Find next matched B index to show what B has
-            next_match_b = None
-            for j in range(len(dumps_b)):
-                if j not in shown_b_indices and j in matched_map_b:
-                    next_match_b = j
-                    break
+        prev_a = idx_a + 1
+        prev_b = idx_b + 1
 
-            if next_match_b is not None:
-                key_b = format_display_key(dumps_b[next_match_b])
-                print(f"[SKIP]  A[{i}] {key_a} <-> B[{next_match_b}] {key_b} (A unmatched)")
-            else:
-                # No more matched B elements
-                print(f"[SKIP]  A[{i}] {key_a} <-> <end> (A unmatched)")
+    # 剩余不匹配部分
+    for i in range(prev_a, len(dumps_a)):
+        key_a = format_display_key(dumps_a[i])
+        print(f"[SKIP] A[{i}] {key_a} <-> <empty>")
 
-    # Show remaining B elements that were never matched
-    for j, dump_b in enumerate(dumps_b):
-        if j not in matched_map_b and j not in shown_b_indices:
-            key_b = format_display_key(dump_b)
-            print(f"[SKIP]  <end> <-> B[{j}] {key_b} (B unmatched)")
+    for j in range(prev_b, len(dumps_b)):
+        key_b = format_display_key(dumps_b[j])
+        print(f"[SKIP] <empty> <-> B[{j}] {key_b}")
 
     return matched_pairs
 
@@ -205,13 +182,12 @@ def _compare_matched_pairs(dumps_a: List[OperatorDump], dumps_b: List[OperatorDu
         dump_a = dumps_a[idx_a]
         dump_b = dumps_b[idx_b]
 
-        dump_filename = format_dump_filename(dump_a)
-        print(f"[COMPARE] {dump_filename}")
+        filename_a = format_dump_filename(dump_a)
+        filename_b = format_dump_filename(dump_b)
+        print(f"{filename_a} <-> {filename_b}")
 
         _compare_lists(dump_a.inputs, dump_b.inputs, "Inputs")
-
-        if dump_a.outputs and dump_b.outputs:
-            _compare_lists(dump_a.outputs, dump_b.outputs, "Outputs")
+        _compare_lists(dump_a.outputs, dump_b.outputs, "Outputs")
 
 
 def ops_comp(dump_dir_a: str, dump_dir_b: str):

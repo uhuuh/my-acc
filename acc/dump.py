@@ -81,7 +81,7 @@ class ops_dump(TorchDispatchMode):
         stack = traceback.extract_stack()
 
         filepath = ""
-        filename = "<global>"
+        filename = ""
         func_name = ""
         lineno = 0
 
