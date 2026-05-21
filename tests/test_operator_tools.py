@@ -4,9 +4,12 @@ Test script for acc package.
 Tests basic functionality of ops_dump and ops_comp.
 """
 
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import torch
 import tempfile
-import os
 from acc import ops_dump, ops_comp
 
 

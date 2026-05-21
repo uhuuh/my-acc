@@ -2,9 +2,12 @@
 Test large tensor handling and contiguous error handling.
 """
 
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import torch
 import tempfile
-import os
 import json
 import pickle
 from acc import ops_dump

@@ -2,9 +2,12 @@
 Test outputs saving and empty tensor handling.
 """
 
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import torch
 import tempfile
-import os
 import json
 import pickle
 from acc import ops_dump, ops_comp
