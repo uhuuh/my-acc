@@ -73,26 +73,39 @@ def _load_dumps(dump_dir: str) -> List[OperatorDump]:
             json_path = os.path.join(dump_dir, filename)
             pkl_path = json_path.replace('.json', '.pkl')
 
-            with open(json_path, 'r') as f:
-                metadata = json.load(f)
+            try:
+                with open(json_path, 'r') as f:
+                    metadata = json.load(f)
 
-            with open(pkl_path, 'rb') as f:
-                pkl_data = pickle.load(f)
+                # Check if pkl file exists
+                if not os.path.exists(pkl_path):
+                    print(f"[COMP WARN] Missing PKL file for {filename}, skipping operator")
+                    continue
 
-            inputs = pkl_data[:-1]
-            outputs = pkl_data[-1]['outputs']
+                with open(pkl_path, 'rb') as f:
+                    pkl_data = pickle.load(f)
 
-            dumps.append(OperatorDump(
-                sequence=metadata['sequence'],
-                filepath=metadata.get('filepath', ''),
-                filename=metadata['filename'],
-                function=metadata['function'],
-                lineno=metadata.get('lineno', 0),
-                opname=metadata['opname'],
-                call_stack=metadata.get('call_stack', []),
-                inputs=inputs,
-                outputs=outputs
-            ))
+                inputs = pkl_data[:-1]
+                outputs = pkl_data[-1]['outputs']
+
+                dumps.append(OperatorDump(
+                    sequence=metadata['sequence'],
+                    filepath=metadata.get('filepath', ''),
+                    filename=metadata['filename'],
+                    function=metadata['function'],
+                    lineno=metadata.get('lineno', 0),
+                    opname=metadata['opname'],
+                    call_stack=metadata.get('call_stack', []),
+                    inputs=inputs,
+                    outputs=outputs
+                ))
+
+            except (pickle.UnpicklingError, FileNotFoundError, json.JSONDecodeError) as e:
+                print(f"[COMP WARN] Failed to load {filename}: {e}, skipping operator")
+                continue
+            except Exception as e:
+                print(f"[COMP WARN] Unexpected error loading {filename}: {e}, skipping operator")
+                continue
 
     dumps.sort(key=lambda x: x.sequence)
     return dumps
