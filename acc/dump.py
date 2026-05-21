@@ -3,6 +3,10 @@ Operator Dumper for PyTorch Operator Dump Tool.
 
 Provides ops_dump context manager for capturing operator calls.
 Uses a global DumperManager for state management.
+
+Environment variable ACC_DUMP_ENABLED controls global dump behavior:
+- Not set or "1"/"true": dump enabled (default)
+- "0"/"false": dump disabled
 """
 
 import os
@@ -18,6 +22,103 @@ from .serialization import OperatorDump, _serialize_inputs, _serialize_outputs, 
 
 
 # ============================================================
+# Patch torch.library.impl for custom operator internal capture
+# ============================================================
+
+_original_impl = None
+_patch_installed = False
+
+
+def _install_impl_patch():
+    """
+    Patch torch.library.impl to wrap custom operator implementations
+    with nested dispatch mode for capturing internal operators.
+    """
+    global _original_impl, _patch_installed
+
+    if _patch_installed:
+        return
+
+    if not hasattr(torch.library, 'impl'):
+        return
+
+    _original_impl = torch.library.impl
+    _patch_installed = True
+    print("[DUMP PATCH] Installing torch.library.impl patch for custom operator capture")
+
+    def patched_impl(op_name_or_def, dispatch_key='CompositeExplicitAutograd'):
+        """
+        Patched impl decorator that wraps implementations with nested dispatch mode.
+        """
+        def decorator(func):
+            # Wrap the implementation with nested dispatch mode
+            # This allows internal operators to be captured
+            wrapped_func = _wrap_impl_with_nested_mode(func, dispatch_key, op_name_or_def)
+
+            # Apply original impl registration with wrapped function
+            original_result = _original_impl(op_name_or_def, dispatch_key)(wrapped_func)
+
+            print(f"[DUMP PATCH] Registered custom operator: {op_name_or_def} with dispatch_key={dispatch_key}")
+
+            if dispatch_key in ('CompositeExplicitAutograd', 'CompositeExplicitAutogradNonFunctional', 'CPU', 'CUDA'):
+                print(f"[DUMP PATCH] Wrapped with nested mode for internal operator capture")
+
+            return original_result
+
+        return decorator
+
+    torch.library.impl = patched_impl
+
+
+def _wrap_impl_with_nested_mode(func, dispatch_key, op_name):
+    """
+    Wrap a custom operator implementation with nested dispatch mode.
+
+    This enables capturing internal operator calls within the implementation.
+    """
+    # For dispatch keys that don't naturally capture internal ops,
+    # wrap with nested mode
+    if dispatch_key in ('CompositeExplicitAutograd', 'CompositeExplicitAutogradNonFunctional', 'CPU', 'CUDA'):
+        def wrapped(*args, **kwargs):
+            # Get the global dumper manager
+            global dumper_manager
+            if dumper_manager and dumper_manager.enabled and dumper_manager.active:
+                # Create nested dispatch mode that uses the same session
+                class NestedCaptureMode(TorchDispatchMode):
+                    def __torch_dispatch__(self, func, types, args=(), kwargs=None):
+                        result = func(*args, **(kwargs or {}))
+                        # Dump to the same session using global manager
+                        dumper_manager.dump_operation(func, args, kwargs or {}, result)
+                        return result
+
+                # Enter nested mode
+                nested_mode = NestedCaptureMode()
+                nested_mode.__enter__()
+                try:
+                    result = func(*args, **kwargs)
+                finally:
+                    nested_mode.__exit__(None, None, None)
+                return result
+            else:
+                return func(*args, **kwargs)
+
+        return wrapped
+    else:
+        # CompositeImplicitAutograd already captures internal ops via decomposition
+        return func
+
+
+def _uninstall_impl_patch():
+    """Remove the torch.library.impl patch."""
+    global _original_impl, _patch_installed
+
+    if _patch_installed and _original_impl:
+        torch.library.impl = _original_impl
+        _patch_installed = False
+        print("[DUMP PATCH] Removed torch.library.impl patch")
+
+
+# ============================================================
 # Global state management
 # ============================================================
 
@@ -25,6 +126,10 @@ class DumperManager:
     """
     Global singleton manager for operator dump state.
     Maintains session directory, sequence counter, and active status.
+
+    Environment variable ACC_DUMP_ENABLED controls enabled state:
+    - Not set or "1"/"true": enabled (default)
+    - "0"/"false": disabled
     """
 
     def __init__(self):
@@ -32,7 +137,13 @@ class DumperManager:
         self.sequence = 0
         self.active = False
         self.max_tensor_size_mb = 10240
-        self.enabled = True  # 全局开关，控制所有 dump 行为
+
+        # Read environment variable to set enabled state
+        env_value = os.environ.get('ACC_DUMP_ENABLED', '1').lower()
+        self.enabled = env_value not in ('0', 'false', 'no', 'off')
+
+        # Install patch when manager is created
+        _install_impl_patch()
 
     def start_session(self, dump_path: str, max_tensor_size_mb: int = 10240):
         """
@@ -44,12 +155,10 @@ class DumperManager:
             return False
 
         if self.active:
-            # 已经在一个 session 中，不允许嵌套
             print(f"[DUMP WARN] ops_dump called while already in active session")
             print(f"[DUMP WARN] Continuing with existing session: {self.session_dir}")
             return False
 
-        # 创建新的 session
         if dist.is_initialized():
             rank = dist.get_rank()
         else:
@@ -150,23 +259,8 @@ class DumperManager:
         self.sequence += 1
 
 
-# Initialize global dumper manager
+# Initialize global dumper manager (triggers patch installation)
 dumper_manager = DumperManager()
-
-# Global flag for easy access (alias to dumper_manager.enabled)
-DUMP_ENABLED = True
-
-
-def set_dump_enabled(enabled: bool):
-    """Set global dump enabled flag."""
-    global DUMP_ENABLED
-    DUMP_ENABLED = enabled
-    dumper_manager.enabled = enabled
-
-
-def get_dump_enabled() -> bool:
-    """Get global dump enabled flag."""
-    return dumper_manager.enabled
 
 
 # ============================================================
@@ -198,17 +292,12 @@ class ops_dump(TorchDispatchMode):
 
     def __torch_dispatch__(self, func, types, args=(), kwargs=None):
         """Intercept torch operator calls."""
-        if not dumper_manager.enabled or not DUMP_ENABLED:
+        if not dumper_manager.enabled:
             return func(*args, **(kwargs or {}))
 
         kwargs = kwargs or {}
-
-        # Execute the operation
         result = func(*args, **kwargs)
-
-        # Dump this operation
         dumper_manager.dump_operation(func, args, kwargs, result)
-
         return result
 
     def __call__(self, func):
@@ -217,71 +306,3 @@ class ops_dump(TorchDispatchMode):
             with self:
                 return func(*args, **kwargs)
         return wrapper
-
-
-# ============================================================
-# Patch torch.library.impl for custom operator internal capture
-# ============================================================
-
-_original_impl = None
-_patch_installed = False
-
-
-def _install_impl_patch():
-    """
-    Patch torch.library.impl to capture internal operators in custom implementations.
-
-    When a custom operator implementation is registered, wrap it with nested dispatch mode
-    to capture internal operator calls.
-    """
-    global _original_impl, _patch_installed
-
-    if _patch_installed:
-        return
-
-    if not hasattr(torch.library, 'impl'):
-        return
-
-    _original_impl = torch.library.impl
-    _patch_installed = True
-    print("[DUMP PATCH] Installing torch.library.impl patch for custom operator capture")
-
-    def patched_impl(op_name_or_def, dispatch_key='CompositeExplicitAutograd'):
-        """
-        Patched impl decorator that wraps implementations with nested dispatch mode.
-        """
-        def decorator(func):
-            # Apply original impl registration
-            original_result = _original_impl(op_name_or_def, dispatch_key)(func)
-
-            # Check if we need to wrap for internal capture
-            # CompositeExplicitAutograd and CPU backend don't capture internal ops
-            # We wrap the implementation to enable nested dispatch mode
-
-            # Note: We cannot modify the registered implementation after registration
-            # The patch is for informational purposes only
-            print(f"[DUMP PATCH] Registered custom operator: {op_name_or_def} with dispatch_key={dispatch_key}")
-
-            if dispatch_key in ('CompositeExplicitAutograd', 'CompositeExplicitAutogradNonFunctional', 'CPU', 'CUDA'):
-                print(f"[DUMP PATCH] Note: dispatch_key={dispatch_key} will not capture internal operators")
-                print(f"[DUMP PATCH] Use CompositeImplicitAutograd for decomposition-based capture")
-
-            return original_result
-
-        return decorator
-
-    torch.library.impl = patched_impl
-
-
-def _uninstall_impl_patch():
-    """Remove the torch.library.impl patch."""
-    global _original_impl, _patch_installed
-
-    if _patch_installed and _original_impl:
-        torch.library.impl = _original_impl
-        _patch_installed = False
-        print("[DUMP PATCH] Removed torch.library.impl patch")
-
-
-# Install patch on module import
-_install_impl_patch()

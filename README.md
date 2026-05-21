@@ -40,30 +40,29 @@ from acc import ops_comp
 ops_comp("/path/to/dump_session_a", "/path/to/dump_session_b")
 ```
 
-### Global Control
+### Global Control via Environment Variable
 
-```python
-from acc import set_dump_enabled, get_dump_enabled
-
+```bash
 # Disable all dump operations
-set_dump_enabled(False)
+export ACC_DUMP_ENABLED=0
 
-# Enable dump operations
-set_dump_enabled(True)
-
-# Check current status
-print(get_dump_enabled())
+# Enable dump operations (default)
+export ACC_DUMP_ENABLED=1
 ```
 
-### Direct Access to Dumper Manager
+Or programmatically:
 
 ```python
 from acc import dumper_manager
 
-# Access session state
-print(dumper_manager.session_dir)
-print(dumper_manager.sequence)
-print(dumper_manager.active)
+# Disable all dump operations
+dumper_manager.enabled = False
+
+# Enable dump operations
+dumper_manager.enabled = True
+
+# Check current status
+print(dumper_manager.enabled)
 ```
 
 ## Output Format
