@@ -64,6 +64,7 @@ def _load_dumps(dump_dir: str) -> List[OperatorDump]:
     """
     Load all dump files from directory.
     Each dump has .json (metadata) and .pkl (input data list).
+    PKL structure: [input1, input2, ..., {'outputs': [output1, ...]}]
     """
     dumps = []
 
@@ -76,9 +77,20 @@ def _load_dumps(dump_dir: str) -> List[OperatorDump]:
                 metadata = json.load(f)
 
             inputs = []
+            outputs = []
             if os.path.exists(pkl_path):
                 with open(pkl_path, 'rb') as f:
-                    inputs = pickle.load(f)
+                    pkl_data = pickle.load(f)
+
+                # Extract inputs and outputs from PKL data
+                if isinstance(pkl_data, list) and len(pkl_data) > 0:
+                    # Last item may contain outputs
+                    last_item = pkl_data[-1]
+                    if isinstance(last_item, dict) and 'outputs' in last_item:
+                        outputs = last_item['outputs']
+                        inputs = pkl_data[:-1]  # Everything except last item
+                    else:
+                        inputs = pkl_data
 
             dump_data = {
                 'sequence': metadata['sequence'],
@@ -88,7 +100,8 @@ def _load_dumps(dump_dir: str) -> List[OperatorDump]:
                 'lineno': metadata.get('lineno', 0),
                 'opname': metadata['opname'],
                 'call_stack': metadata.get('call_stack', []),
-                'inputs': inputs
+                'inputs': inputs,
+                'outputs': outputs
             }
 
             dumps.append(OperatorDump.from_dict(dump_data))

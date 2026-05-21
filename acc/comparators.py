@@ -109,9 +109,20 @@ class TensorComparator(ElementComparator):
         a_float = a.float()
         b_float = b.float()
 
+        # Handle empty tensors - skip content comparison
+        total_count = a_float.numel()
+        if total_count == 0:
+            return {
+                'dtype_match': dtype_match,
+                'shape_match': shape_match,
+                'dtype_original_a': str(dtype_a_original),
+                'dtype_original_b': str(dtype_b_original),
+                'exact_match': True,
+                'empty_tensor': True
+            }
+
         exact_match = torch.allclose(a_float, b_float, rtol=0, atol=0)
         match_count = (a_float == b_float).sum().item()
-        total_count = a_float.numel()
         match_ratio = match_count / total_count if total_count > 0 else 1.0
 
         diff = torch.abs(a_float - b_float)

@@ -39,7 +39,7 @@ def test_ops_dump_context_manager():
             for f in dump_files[:5]:  # Show first 5 files
                 print(f"  - {f}")
     
-    print("\n✓ Test 1 passed\n")
+    print("\nPASS: Test 1 passed\n")
 
 
 def test_ops_dump_decorator():
@@ -68,7 +68,7 @@ def test_ops_dump_decorator():
             dump_files = [f for f in os.listdir(dump_path) if f.endswith('.pkl')]
             print(f"Dump files: {len(dump_files)} files")
     
-    print("\n✓ Test 2 passed\n")
+    print("\nPASS: Test 2 passed\n")
 
 
 def test_ops_comp():
@@ -111,7 +111,7 @@ def test_ops_comp():
         # Compare dumps
         ops_comp(session_a_path, session_b_path)
     
-    print("\n✓ Test 3 passed\n")
+    print("\nPASS: Test 3 passed\n")
 
 
 def main():
@@ -124,7 +124,7 @@ def main():
     print("Testing import...")
     print(f"  ops_dump: {ops_dump}")
     print(f"  ops_comp: {ops_comp}")
-    print("✓ Import successful\n")
+    print("PASS: Import successful\n")
     
     # Run tests
     test_ops_dump_context_manager()
@@ -132,7 +132,7 @@ def main():
     test_ops_comp()
     
     print("=" * 60)
-    print("All tests passed! ✓")
+    print("All tests passed!")
     print("=" * 60)
 
 

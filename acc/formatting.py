@@ -43,6 +43,11 @@ def format_comparison_result(result: Dict) -> str:
     if 'unsupported' in result:
         return "type_unsupported"
 
+    if 'empty_tensor' in result:
+        dtype_status = 'match' if result['dtype_match'] else 'mismatch'
+        shape_status = 'match' if result['shape_match'] else 'mismatch'
+        return f"dtype={dtype_status}, shape={shape_status}, empty_tensor_no_content"
+
     if 'content_skipped' in result:
         dtype_status = 'match' if result['dtype_match'] else 'mismatch'
         shape_status = 'match' if result['shape_match'] else 'mismatch'

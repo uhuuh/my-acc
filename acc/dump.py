@@ -13,20 +13,22 @@ from datetime import datetime
 import torch
 import torch.distributed as dist
 from torch.utils._python_dispatch import TorchDispatchMode
-from .serialization import OperatorDump, _serialize_inputs, _sanitize_filename, _sanitize_opname
+from .serialization import OperatorDump, _serialize_inputs, _serialize_outputs, _sanitize_filename, _sanitize_opname
 
 
 class ops_dump(TorchDispatchMode):
     """Context manager and decorator for dumping PyTorch operator calls."""
 
-    def __init__(self, dump_path: str):
+    def __init__(self, dump_path: str, max_tensor_size_mb: int = 10240):
         """
         Initialize OperatorDumper.
 
         Args:
             dump_path: Base path for dump output
+            max_tensor_size_mb: Maximum tensor size in MB (default 10GB)
         """
         self.dump_path = dump_path
+        self.max_tensor_size_mb = max_tensor_size_mb
         self.session_dir = None
         self.sequence = 0
         self._active = False
@@ -69,12 +71,12 @@ class ops_dump(TorchDispatchMode):
         # Execute the operation
         result = func(*args, **kwargs)
 
-        # Dump this operation
-        self._dump_operation(func, args, kwargs)
+        # Dump this operation (including outputs)
+        self._dump_operation(func, args, kwargs, result)
 
         return result
 
-    def _dump_operation(self, func, args, kwargs):
+    def _dump_operation(self, func, args, kwargs, result):
         """Dump a single operator call."""
         stack = traceback.extract_stack()
 
@@ -103,7 +105,8 @@ class ops_dump(TorchDispatchMode):
         filename_safe = _sanitize_filename(filename)
         opname_safe = _sanitize_opname(str(func))
 
-        inputs = _serialize_inputs(args, kwargs)
+        inputs = _serialize_inputs(args, kwargs, self.max_tensor_size_mb)
+        outputs = _serialize_outputs(result, self.max_tensor_size_mb)
 
         op_dump = OperatorDump(
             sequence=self.sequence,
@@ -113,7 +116,8 @@ class ops_dump(TorchDispatchMode):
             lineno=lineno,
             opname=str(func),
             call_stack=call_stack,
-            inputs=inputs
+            inputs=inputs,
+            outputs=outputs
         )
 
         json_filename = f"{self.sequence:06d}__{filename_safe}__{func_name}__{opname_safe}.json"
@@ -126,7 +130,8 @@ class ops_dump(TorchDispatchMode):
             with open(json_path, 'w') as f:
                 json.dump(op_dump.to_dict(), f, indent=2)
             with open(pkl_path, 'wb') as f:
-                pickle.dump(inputs, f)
+                pkl_data = inputs + [{'outputs': outputs}]
+                pickle.dump(pkl_data, f)
         except Exception as e:
             print(f"[DUMP ERROR] {self.sequence:06d} | {filename}:{lineno} | {func} | {e}")
             self.sequence += 1
