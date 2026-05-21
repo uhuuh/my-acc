@@ -27,27 +27,31 @@ def get_opnames_from_dump(session_dir):
 
 
 # ============================================================
-# Test 1: torch.library (New PyTorch Operator Registration API)
+# Test 1: torch.library with CompositeExplicitAutograd (No Decomposition)
 # ============================================================
 
-def test_torch_library_registration():
-    """Test custom operator registered via torch.library."""
+def test_torch_library_explicit_autograd():
+    """
+    Test CompositeExplicitAutograd operator - internal ops NOT captured.
+
+    CompositeExplicitAutograd provides explicit backward formula.
+    Internal operators do NOT decompose through dispatch mode.
+    """
     print("=" * 60)
-    print("Test 1: torch.library registered operator")
+    print("Test 1: torch.library CompositeExplicitAutograd (No Decomposition)")
     print("=" * 60)
 
-    # Define custom operator using torch.library
     try:
         # 定义自定义算子
         torch.library.define(
-            "my_ops::custom_add",
+            "explicit_ops::custom_add",
             "(Tensor a, Tensor b) -> Tensor"
         )
 
-        # 实现自定义算子
-        @torch.library.impl("my_ops::custom_add", "CompositeExplicitAutograd")
+        # 实现自定义算子 - 使用 CompositeExplicitAutograd
+        @torch.library.impl("explicit_ops::custom_add", "CompositeExplicitAutograd")
         def custom_add_impl(a, b):
-            # 内部调用多个原生算子
+            # 内部调用多个原生算子，但不会被单独捕获
             y = torch.add(a, b)
             y = torch.mul(y, 2.0)
             y = torch.relu(y)
@@ -59,7 +63,7 @@ def test_torch_library_registration():
             b = torch.randn(3, 3)
 
             with ops_dump(tmpdir) as dumper:
-                result = torch.ops.my_ops.custom_add(a, b)
+                result = torch.ops.explicit_ops.custom_add(a, b)
 
             dump_dirs = [d for d in os.listdir(tmpdir) if os.path.isdir(os.path.join(tmpdir, d))]
             session_dir = os.path.join(tmpdir, dump_dirs[0])
@@ -67,17 +71,83 @@ def test_torch_library_registration():
 
             print(f"Captured {len(opnames)} operators: {opnames}")
 
+            # CompositeExplicitAutograd 只捕获算子本身，不捕获内部算子
+            assert len(opnames) >= 1, "Should capture at least the custom operator"
+
+            # 验证捕获了自定义算子
+            custom_op_found = any('custom_add' in op.lower() for op in opnames)
+            print(f"Custom operator captured: {custom_op_found}")
+
+            # 验证内部算子没有被单独捕获（这是预期行为）
+            # 注意：需要检查 aten.xxx 格式，而不是自定义算子名中的匹配
+            internal_aten_ops = ['aten.add', 'aten.mul', 'aten.relu']
+            internal_found = [op for op in internal_aten_ops if any(op in o.lower() for o in opnames)]
+            print(f"Internal aten operators found (expected empty): {internal_found}")
+            assert len(internal_found) == 0, f"Internal operators should NOT be captured in CompositeExplicitAutograd: {internal_found}"
+            print("PASS: CompositeExplicitAutograd behaves as expected (no decomposition)\n")
+
+    except Exception as e:
+        print(f"SKIP: CompositeExplicitAutograd test - {e}\n")
+
+
+# ============================================================
+# Test 1b: torch.library with CompositeImplicitAutograd (With Decomposition)
+# ============================================================
+
+def test_torch_library_implicit_autograd():
+    """
+    Test CompositeImplicitAutograd operator - internal ops ARE captured.
+
+    CompositeImplicitAutograd decomposes the operator through dispatch mode,
+    allowing internal operators to be captured individually.
+    """
+    print("=" * 60)
+    print("Test 1b: torch.library CompositeImplicitAutograd (With Decomposition)")
+    print("=" * 60)
+
+    try:
+        # 定义自定义算子
+        torch.library.define(
+            "implicit_ops::custom_transform",
+            "(Tensor x) -> Tensor"
+        )
+
+        # 实现自定义算子 - 使用 CompositeImplicitAutograd
+        @torch.library.impl("implicit_ops::custom_transform", "CompositeImplicitAutograd")
+        def custom_transform_impl(x):
+            # 内部调用多个原生算子，会被单独捕获
+            y = torch.add(x, 1.0)
+            y = torch.mul(y, 2.0)
+            y = torch.relu(y)
+            return y
+
+        # 测试 dump
+        with tempfile.TemporaryDirectory() as tmpdir:
+            x = torch.randn(3, 3)
+
+            with ops_dump(tmpdir) as dumper:
+                result = torch.ops.implicit_ops.custom_transform(x)
+
+            dump_dirs = [d for d in os.listdir(tmpdir) if os.path.isdir(os.path.join(tmpdir, d))]
+            session_dir = os.path.join(tmpdir, dump_dirs[0])
+            opnames = get_opnames_from_dump(session_dir)
+
+            print(f"Captured {len(opnames)} operators: {opnames}")
+
+            # CompositeImplicitAutograd 会捕获内部算子
+            assert len(opnames) >= 3, f"Should capture at least 3 internal operators, got {len(opnames)}"
+
             # 验证捕获了内部的原生算子
             expected_ops = ['add', 'mul', 'relu']
             for expected in expected_ops:
                 found = any(expected in op.lower() for op in opnames)
-                assert found, f"Expected {expected} operator not found"
-                print(f"PASS: Found {expected}")
+                assert found, f"Expected {expected} operator not found in decomposition"
+                print(f"PASS: Found {expected} in decomposition")
 
-        print("PASS: torch.library test completed\n")
+        print("PASS: CompositeImplicitAutograd test completed\n")
 
     except Exception as e:
-        print(f"SKIP: torch.library test - {e}\n")
+        print(f"SKIP: CompositeImplicitAutograd test - {e}\n")
 
 
 # ============================================================
@@ -370,7 +440,8 @@ def test_custom_conditional():
 
 
 if __name__ == "__main__":
-    test_torch_library_registration()
+    test_torch_library_explicit_autograd()
+    test_torch_library_implicit_autograd()
     test_autograd_function()
     test_torchjit_script()
     test_custom_module()

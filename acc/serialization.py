@@ -50,7 +50,17 @@ class OperatorDump:
 
 def _sanitize_filename(filename: str) -> str:
     """Sanitize filename for dump file naming."""
-    return filename.replace('/', '_').replace('\\', '_').replace('.py', '')
+    # Handle special filenames like <string>, <stdin>, <module>
+    if filename.startswith('<') and filename.endswith('>'):
+        filename = filename[1:-1]  # Remove angle brackets
+
+    # Replace invalid characters for file naming
+    result = filename.replace('/', '_').replace('\\', '_').replace('.py', '')
+    # Remove any remaining invalid characters
+    invalid_chars = ['<', '>', ':', '"', '|', '?', '*']
+    for char in invalid_chars:
+        result = result.replace(char, '_')
+    return result
 
 
 def _sanitize_opname(opname: str) -> str:
