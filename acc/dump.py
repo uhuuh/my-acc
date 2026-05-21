@@ -31,8 +31,7 @@ _patch_installed = False
 
 def _install_impl_patch():
     """
-    Patch torch.library.impl to wrap custom operator implementations
-    with nested dispatch mode for capturing internal operators.
+    Patch torch.library.impl to wrap implementations with nested dispatch mode.
     """
     global _original_impl, _patch_installed
 
@@ -44,78 +43,40 @@ def _install_impl_patch():
 
     _original_impl = torch.library.impl
     _patch_installed = True
-    print("[DUMP PATCH] Installing torch.library.impl patch for custom operator capture")
+    print("[DUMP PATCH] Installing torch.library.impl patch")
 
-    def patched_impl(op_name_or_def, dispatch_key='CompositeExplicitAutograd'):
-        """
-        Patched impl decorator that wraps implementations with nested dispatch mode.
-        """
-        def decorator(func):
-            # Wrap the implementation with nested dispatch mode
-            # This allows internal operators to be captured
-            wrapped_func = _wrap_impl_with_nested_mode(func, dispatch_key, op_name_or_def)
+    def patched_impl(qualname, types, func=None, *, lib=None):
+        """Wrap user's implementation function with nested dispatch mode."""
 
-            # Apply original impl registration with wrapped function
-            original_result = _original_impl(op_name_or_def, dispatch_key)(wrapped_func)
-
-            print(f"[DUMP PATCH] Registered custom operator: {op_name_or_def} with dispatch_key={dispatch_key}")
-
-            if dispatch_key in ('CompositeExplicitAutograd', 'CompositeExplicitAutogradNonFunctional', 'CPU', 'CUDA'):
-                print(f"[DUMP PATCH] Wrapped with nested mode for internal operator capture")
-
-            return original_result
-
-        return decorator
-
-    torch.library.impl = patched_impl
-
-
-def _wrap_impl_with_nested_mode(func, dispatch_key, op_name):
-    """
-    Wrap a custom operator implementation with nested dispatch mode.
-
-    This enables capturing internal operator calls within the implementation.
-    """
-    # For dispatch keys that don't naturally capture internal ops,
-    # wrap with nested mode
-    if dispatch_key in ('CompositeExplicitAutograd', 'CompositeExplicitAutogradNonFunctional', 'CPU', 'CUDA'):
-        def wrapped(*args, **kwargs):
-            # Get the global dumper manager
-            global dumper_manager
-            if dumper_manager and dumper_manager.enabled and dumper_manager.active:
-                # Create nested dispatch mode that uses the same session
-                class NestedCaptureMode(TorchDispatchMode):
+        def wrap(f):
+            """Wrap function to capture internal operators."""
+            def wrapped(*args, **kwargs):
+                # Create nested dispatch mode
+                class NestedMode(TorchDispatchMode):
                     def __torch_dispatch__(self, func, types, args=(), kwargs=None):
                         result = func(*args, **(kwargs or {}))
-                        # Dump to the same session using global manager
                         dumper_manager.dump_operation(func, args, kwargs or {}, result)
                         return result
 
-                # Enter nested mode
-                nested_mode = NestedCaptureMode()
-                nested_mode.__enter__()
+                mode = NestedMode()
+                mode.__enter__()
                 try:
-                    result = func(*args, **kwargs)
+                    return f(*args, **kwargs)
                 finally:
-                    nested_mode.__exit__(None, None, None)
-                return result
-            else:
-                return func(*args, **kwargs)
+                    mode.__exit__(None, None, None)
+            return wrapped
 
-        return wrapped
-    else:
-        # CompositeImplicitAutograd already captures internal ops via decomposition
-        return func
+        # Call original impl with wrapped function
+        if func is None:
+            # Decorator mode
+            def decorator(f):
+                return _original_impl(qualname, types, wrap(f), lib=lib)
+            return decorator
+        else:
+            # Direct mode
+            return _original_impl(qualname, types, wrap(func), lib=lib)
 
-
-def _uninstall_impl_patch():
-    """Remove the torch.library.impl patch."""
-    global _original_impl, _patch_installed
-
-    if _patch_installed and _original_impl:
-        torch.library.impl = _original_impl
-        _patch_installed = False
-        print("[DUMP PATCH] Removed torch.library.impl patch")
+    torch.library.impl = patched_impl
 
 
 # ============================================================
