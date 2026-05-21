@@ -18,9 +18,9 @@
 
 ```
 acc/
-├── __init__.py          # 导出 ops_dump, ops_comp, OperatorDump, DumpSession, CacheManager
-├── cache.py             # CacheEntry, CacheManager
-├── serialization.py     # OperatorDump, DumpSession, 序列化/反序列化
+├── __init__.py          # 导出 ops_dump, ops_comp, OperatorRecord, SerializationSession
+├── cache.py             # CacheEntry, CacheManager (内部模块)
+├── serialization.py     # OperatorDump, SerializationSession, 序列化/反序列化
 ├── dump.py              # ops_dump context manager (简化)
 ├── comp.py              # ops_comp, 比较流程
 ├── comparators.py       # 各Comparator类 (增加nan/inf描述)
@@ -41,21 +41,22 @@ class CacheEntry:
     type: str              # 'tensor' 或 'numpy'
     dtype: str             # 数据类型如 'float32', 'int64'
     shape: List[int]       # 形状
-    storage_path: str      # 存储文件相对路径
 ```
 
 #### CacheManager
 
 ```python
 class CacheManager:
-    def __init__(self, storage_dir: str):
+    def __init__(self, storage_dir: str, enable_cache: bool = True):
         self.storage_dir = storage_dir
+        self.enable_cache = enable_cache
         self._cached_ids: Set[str] = set()  # 已缓存的content_hash
 
     def get_or_cache(self, obj: Any) -> Any:
         """
         输入任意对象，返回：
-        - tensor/numpy：返回CacheEntry（新缓存或已缓存）
+        - tensor/numpy + enable_cache=True：返回CacheEntry（新缓存或已缓存）
+        - tensor/numpy + enable_cache=False：直接返回原对象（不缓存）
         - 其他对象：直接返回原对象
         """
 
@@ -67,24 +68,24 @@ class CacheManager:
         """
 
     def _compute_content_hash(self, obj) -> str:
-        """使用MD5计算tensor/numpy内容的哈希值"""
+        """使用BLAKE2计算tensor/numpy内容的哈希值"""
 
     def _save_to_storage(self, obj, cache_id: str):
         """保存tensor/numpy到 storage/{cache_id}.pkl"""
 ```
 
 **哈希计算策略**
-- 使用 `hashlib.md5` + `tensor.numpy().tobytes()` 直接获取连续内存块
-- MD5比SHA256快约3-5倍
+- 使用 `hashlib.blake2b` + `tensor.numpy().tobytes()` 直接获取连续内存块
+- BLAKE2比MD5更快且更安全，是现代推荐的哈希算法
 - cache_id即为content_hash，无需映射关系
 
 ### 2. Serialization Layer (serialization.py)
 
-#### OperatorDump
+#### OperatorRecord
 
 ```python
 @dataclass
-class OperatorDump:
+class OperatorRecord:
     sequence: int
     filepath: str
     filename: str
@@ -97,17 +98,18 @@ class OperatorDump:
     outputs: List[Any] = field(default_factory=list)   # outputs (list形式)
 ```
 
-#### DumpSession
+#### SerializationSession
 
 ```python
-class DumpSession:
-    """管理单个dump会话的状态和保存"""
+class SerializationSession:
+    """管理单个序列化会话的状态和保存，内部集成CacheManager"""
 
-    def __init__(self, dump_path: str, max_tensor_size_mb: int = 10240):
+    def __init__(self, dump_path: str, max_tensor_size_mb: int = 10240, enable_cache: bool = True):
         self.session_dir: str = None
         self.sequence: int = 0
         self.max_tensor_size_mb: int = max_tensor_size_mb
-        self.cache_manager: CacheManager = None
+        self._cache_manager: CacheManager = None  # 内部使用，对外隐藏
+        self._enable_cache: bool = enable_cache
 
     def start(self) -> str:
         """创建会话目录和storage子目录，初始化CacheManager"""
@@ -120,12 +122,12 @@ class DumpSession:
         """结束会话，打印总结"""
 
     @staticmethod
-    def load_metadata(json_path: str) -> OperatorDump:
+    def load_metadata(json_path: str) -> OperatorRecord:
         """加载JSON元数据，不含inputs/outputs"""
 
     @staticmethod
-    def load_data(pkl_path: str, cache_manager: CacheManager) -> Tuple[Dict, List]:
-        """加载PKL数据，解析CacheEntry为实际对象"""
+    def load_data(pkl_path: str, storage_dir: str) -> Tuple[Dict, List]:
+        """加载PKL数据，自动从storage目录解析CacheEntry为实际对象"""
 ```
 
 **存储结构**
@@ -158,8 +160,8 @@ session_dir/
 
 ```python
 class ops_dump(TorchDispatchMode):
-    def __init__(self, dump_path: str, max_tensor_size_mb: int = 10240):
-        self.session = DumpSession(dump_path, max_tensor_size_mb)
+    def __init__(self, dump_path: str, max_tensor_size_mb: int = 10240, enable_cache: bool = True):
+        self.session = SerializationSession(dump_path, max_tensor_size_mb, enable_cache)
 
     def __enter__(self):
         self.session.start()
@@ -186,22 +188,22 @@ def ops_comp(dump_dir_a: str, dump_dir_b: str):
     dumps_a = load_all_metadata(dump_dir_a)
     dumps_b = load_all_metadata(dump_dir_b)
 
-    # 2. 初始化CacheManager
-    cache_manager_a = CacheManager(os.path.join(dump_dir_a, 'storage'))
-    cache_manager_b = CacheManager(os.path.join(dump_dir_b, 'storage'))
+    # 2. 准备storage目录路径（用于load_data时解析cache）
+    storage_dir_a = os.path.join(dump_dir_a, 'storage')
+    storage_dir_b = os.path.join(dump_dir_b, 'storage')
 
     # 3. LCS匹配（只用元数据）
     matched_pairs = find_lcs_matches(dumps_a, dumps_b)
 
     # 4. 比较matched pairs（按需加载实际数据）
     compare_matched_pairs(dumps_a, dumps_b, matched_pairs,
-                          cache_manager_a, cache_manager_b)
+                          storage_dir_a, storage_dir_b)
 ```
 
 #### 进度显示
 
 ```python
-def compare_matched_pairs(dumps_a, dumps_b, matched_pairs, cache_manager_a, cache_manager_b):
+def compare_matched_pairs(dumps_a, dumps_b, matched_pairs, storage_dir_a, storage_dir_b):
     total = len(matched_pairs)
     start_time = time.time()
 
@@ -213,7 +215,9 @@ def compare_matched_pairs(dumps_a, dumps_b, matched_pairs, cache_manager_a, cach
 
         print(f"[COMPARE {idx}/{total} | ETA: {format_eta(eta_seconds)}]")
 
-        # 按需加载实际数据并比较
+        # 按需加载实际数据并比较（SerializationSession.load_data内部处理cache）
+        inputs_a, outputs_a = SerializationSession.load_data(pkl_path_a, storage_dir_a)
+        inputs_b, outputs_b = SerializationSession.load_data(pkl_path_b, storage_dir_b)
         ...
 
 def format_eta(seconds: float) -> str:
@@ -265,16 +269,16 @@ NumpyComparator 同样处理。
 
 ## Migration Strategy
 
-1. **新增cache.py** - 实现CacheEntry和CacheManager
-2. **改造serialization.py** - 新增DumpSession，调整OperatorDump结构，实现save/load接口
-3. **简化dump.py** - 移除序列化逻辑，改用DumpSession
-4. **改造comp.py** - 实现按需加载、进度显示、args/kwargs分离比较
+1. **新增cache.py** - 实现CacheEntry和CacheManager（内部模块，enable_cache参数）
+2. **改造serialization.py** - 新增SerializationSession，调整OperatorDump结构，实现save/load接口
+3. **简化dump.py** - 移除序列化逻辑，改用SerializationSession
+4. **改造comp.py** - 实现按需加载、进度显示、args/kwargs分离比较（使用SerializationSession.load_data）
 5. **改造comparators.py** - 增加nan/inf描述
-6. **更新__init__.py** - 导出新类
+6. **更新__init__.py** - 导出SerializationSession（CacheManager作为内部模块不导出）
 
 ## Test Coverage
 
-- CacheManager: get_or_cache, resolve, content_hash计算
-- DumpSession: start, save_operation, end, load_metadata, load_data
+- CacheManager: get_or_cache, resolve, content_hash计算, enable_cache参数
+- SerializationSession: start, save_operation, end, load_metadata, load_data
 - 比较流程: args/kwargs分离、进度显示
 - Comparators: nan/inf描述正确性

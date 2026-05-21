@@ -1,4 +1,19 @@
-也保存算子的输出 ✓ 完成
-处理特殊情况，tensor是一个空tensor ✓ 完成
+针对 tensor和numpy，设计一个cache机制
+实际内容保存到dump目录的storage文件夹下，以id和实际保存的文件组织
+cache id是内存块的哈希值
+dump算子时，如果想匹配，替换为cache元信息
+compare加载时，从cache管理器中获取实际的内容
+注意cache对象中有type（numpy 还是 tenosr），dtype、shape等信息
+再设计一个全局的cache管理器，维护已经cache块，cache类与cache管理器交互
+cache相关实现放置在单独的cache文件中、
+总而言之，cache管理器，有两个方法，一个输入任意，如果满足要求返回元对象或者cache元信息，一个方法输入任意，如果是cache元信息则重新创建实际对象，记住可以多个tensor持有相同的共享块
+序列化层提供通用的两个接口，保存和加载，保存提供调用栈，算子名称，输入和输出信息，加载分为两个接口，加载描述信息，和加载输入和输出，这两个信息独立维护。保存和加载时自动调用cache相关机制
 
-使用super power skill实现 ✓ 完成（TDD流程）
+比较时tneosr或者numpy的描述信息中加上，是否有nan、inf、-inf
+
+算子的输入和输出，重新组织，分为两部分args和kwargs
+比较的时候，如果是kwargs要带上key信息，args带上位置索引就好
+比较的时候，应该在实际比较的时候再依次加载输入和输出，在匹配阶段不需要这么做
+比较的时候，比较日志也应该加上一个，进度条类似的内容，当前多少和总共多少，剩余比较时间之类的内容
+
+使用super power skill实现，最后检查一个所有点是否已经实现
