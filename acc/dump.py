@@ -91,12 +91,11 @@ class ops_dump(TorchDispatchMode):
             model(input)
     """
 
-    def __init__(self, dump_path: str, max_tensor_size_mb: int = 10240, enable_cache: bool = True, enable_async_io: bool = True):
+    def __init__(self, dump_path: str, max_tensor_size_mb: int = 10240, enable_async_io: bool = True):
         self.dump_path = dump_path
         self.max_tensor_size_mb = max_tensor_size_mb
-        self.enable_cache = enable_cache
         self.enable_async_io = enable_async_io
-        self.session = SerializationSession(dump_path, max_tensor_size_mb, enable_cache, enable_async_io)
+        self.session = SerializationSession(dump_path, max_tensor_size_mb, enable_async_io)
         self.enabled = os.environ.get('ACC_DUMP_ENABLED', '1').lower() not in ('0', 'false', 'no', 'off')
         self._is_nested = False  # Flag to track if this is a nested dump
 

@@ -44,6 +44,7 @@ class IOWriter:
     def write(self, file_path: str, content):
         """Write file. Async if enabled, otherwise sync."""
         if self.enable_async:
+            self._pending_files.add(file_path)
             asyncio.run_coroutine_threadsafe(self._write_async(file_path, content), self._loop)
         else:
             self._write_sync(file_path, content)
@@ -62,7 +63,6 @@ class IOWriter:
 
     async def _write_async(self, file_path: str, content):
         """Async write task."""
-        self._pending_files.add(file_path)
         try:
             await asyncio.get_event_loop().run_in_executor(None, self._write_sync, file_path, content)
         except Exception as e:

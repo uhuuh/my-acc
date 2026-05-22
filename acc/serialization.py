@@ -4,6 +4,7 @@ Serialization helpers and data structures for PyTorch Operator Dump Tool.
 
 import os
 import json
+import pickle
 import time
 import uuid
 import traceback
@@ -96,7 +97,7 @@ def _serialize_value(value, max_tensor_size_mb: int, cache_mgr: CacheManager):
         prepared = _serialize_tensor(value, max_tensor_size_mb)
         if prepared is None:
             return None
-        return cache_mgr.get_or_cache(prepared)
+        return cache_mgr.save(prepared)
     return value
 
 
@@ -110,7 +111,7 @@ def _serialize_outputs(result, max_tensor_size_mb: int, cache_mgr: CacheManager)
         if prepared is None:
             outputs_list.append(None)
         else:
-            outputs_list.append(cache_mgr.get_or_cache(prepared))
+            outputs_list.append(cache_mgr.save(prepared))
     elif isinstance(result, (tuple, list)):
         for item in result:
             outputs_list.append(_serialize_value(item, max_tensor_size_mb, cache_mgr))
@@ -122,12 +123,11 @@ def _serialize_outputs(result, max_tensor_size_mb: int, cache_mgr: CacheManager)
 class SerializationSession:
     """Manages a single serialization session, integrating CacheManager."""
 
-    def __init__(self, dump_path: str, max_tensor_size_mb: int = 10240, enable_cache: bool = True, enable_async_io: Optional[bool] = None):
+    def __init__(self, dump_path: str, max_tensor_size_mb: int = 10240, enable_async_io: Optional[bool] = None):
         self.dump_path = dump_path
         self.session_dir: Optional[str] = None
         self.sequence: int = 0
         self.max_tensor_size_mb: int = max_tensor_size_mb
-        self._enable_cache: bool = enable_cache
         self._enable_async_io: Optional[bool] = enable_async_io
         self._cache_manager: Optional[CacheManager] = None
         self._io_writer: Optional[IOWriter] = None
@@ -153,7 +153,7 @@ class SerializationSession:
         # Initialize IOWriter (default: async enabled)
         async_enabled = self._enable_async_io if self._enable_async_io is not None else True
         self._io_writer = IOWriter(enable_async=async_enabled)
-        self._cache_manager = CacheManager(storage_dir, self._enable_cache, io_writer=self._io_writer)
+        self._cache_manager = CacheManager(storage_dir, io_writer=self._io_writer)
         self.sequence = 0
         self._start_time = time.time()
         print(f"[DUMP] Created session directory: {self.session_dir}")
@@ -234,14 +234,15 @@ class SerializationSession:
 
         Returns: (inputs_dict, outputs_list) where inputs_dict has 'args' and 'kwargs' keys.
         """
-        cache_mgr = CacheManager(storage_dir, enable_cache=False)
+        io_writer = IOWriter(enable_async=False)
+        cache_mgr = CacheManager(storage_dir, io_writer=io_writer)
         with open(pkl_path, 'rb') as f:
             pkl_data = pickle.load(f)
         inputs = pkl_data['inputs']
         outputs = pkl_data['outputs']
-        resolved_args = [cache_mgr.resolve(v) for v in inputs['args']]
-        resolved_kwargs = {k: cache_mgr.resolve(v) for k, v in inputs['kwargs'].items()}
-        resolved_outputs = [cache_mgr.resolve(v) for v in outputs]
+        resolved_args = cache_mgr.load(inputs['args'])
+        resolved_kwargs = cache_mgr.load(inputs['kwargs'])
+        resolved_outputs = cache_mgr.load(outputs)
         return {'args': resolved_args, 'kwargs': resolved_kwargs}, resolved_outputs
 
     @property
