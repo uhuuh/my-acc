@@ -2,9 +2,9 @@
 PyTorch Operator Dump & Precision Comparison Tool
 """
 
-from .dump import ops_dump, dumper_manager
+from .dump import ops_dump
 from .comp import ops_comp
-from .serialization import OperatorDump
+from .serialization import OperatorRecord, SerializationSession
 
-__all__ = ['ops_dump', 'ops_comp', 'OperatorDump', 'dumper_manager']
-__version__ = '0.1.0'
+__all__ = ['ops_dump', 'ops_comp', 'OperatorRecord', 'SerializationSession']
+__version__ = '0.2.0'
