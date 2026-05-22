@@ -6,14 +6,15 @@ Provides ops_comp function for comparing two dump sessions.
 
 import json
 import os
-import pickle
+import time
 from typing import List, Tuple
-from .serialization import OperatorDump
+from .serialization import SerializationSession
 from .formatting import (
     format_signature,
     format_display_key,
     format_dump_filename,
-    format_comparison_result
+    format_comparison_result,
+    format_eta,
 )
 from .comparators import (
     create_comparator,
@@ -23,27 +24,14 @@ from .comparators import (
 
 
 def _lcs_length(a: List[str], b: List[str]) -> Tuple[int, List[Tuple[int, int]]]:
-    """
-    Find longest common subsequence and return matched pairs.
-
-    Args:
-        a: First sequence of signatures
-        b: Second sequence of signatures
-
-    Returns:
-        Tuple of (lcs_length, matched_pairs as list of (idx_a, idx_b))
-    """
     m, n = len(a), len(b)
-
     dp = [[0] * (n + 1) for _ in range(m + 1)]
-
     for i in range(1, m + 1):
         for j in range(1, n + 1):
             if a[i-1] == b[j-1]:
                 dp[i][j] = dp[i-1][j-1] + 1
             else:
                 dp[i][j] = max(dp[i-1][j], dp[i][j-1])
-
     matched_pairs = []
     i, j = m, n
     while i > 0 and j > 0:
@@ -55,66 +43,30 @@ def _lcs_length(a: List[str], b: List[str]) -> Tuple[int, List[Tuple[int, int]]]
             i -= 1
         else:
             j -= 1
-
     matched_pairs.reverse()
     return dp[m][n], matched_pairs
 
 
-def _load_dumps(dump_dir: str) -> List[OperatorDump]:
-    """
-    Load all dump files from directory.
-    Each dump has .json (metadata) and .pkl (input data list).
-    PKL structure: [input1, input2, ..., {'outputs': [output1, ...]}]
-    """
-    dumps = []
-
+def _load_all_metadata(dump_dir: str) -> list:
+    """Load all metadata from dump directory (JSON only, no tensor data)."""
+    records = []
     for filename in os.listdir(dump_dir):
         if filename.endswith('.json'):
             json_path = os.path.join(dump_dir, filename)
-            pkl_path = json_path.replace('.json', '.pkl')
-
             try:
-                with open(json_path, 'r') as f:
-                    metadata = json.load(f)
-
-                # Check if pkl file exists
-                if not os.path.exists(pkl_path):
-                    print(f"[COMP WARN] Missing PKL file for {filename}, skipping operator")
-                    continue
-
-                with open(pkl_path, 'rb') as f:
-                    pkl_data = pickle.load(f)
-
-                inputs = pkl_data[:-1]
-                outputs = pkl_data[-1]['outputs']
-
-                dumps.append(OperatorDump(
-                    sequence=metadata['sequence'],
-                    filepath=metadata.get('filepath', ''),
-                    filename=metadata['filename'],
-                    function=metadata['function'],
-                    lineno=metadata.get('lineno', 0),
-                    opname=metadata['opname'],
-                    call_stack=metadata.get('call_stack', []),
-                    inputs=inputs,
-                    outputs=outputs
-                ))
-
-            except (pickle.UnpicklingError, FileNotFoundError, json.JSONDecodeError) as e:
-                print(f"[COMP WARN] Failed to load {filename}: {e}, skipping operator")
-                continue
+                record = SerializationSession.load_metadata(json_path)
+                records.append(record)
+            except (json.JSONDecodeError, FileNotFoundError) as e:
+                print(f"[COMP WARN] Failed to load metadata {filename}: {e}")
             except Exception as e:
-                print(f"[COMP WARN] Unexpected error loading {filename}: {e}, skipping operator")
-                continue
-
-    dumps.sort(key=lambda x: x.sequence)
-    return dumps
+                print(f"[COMP WARN] Unexpected error loading {filename}: {e}")
+    records.sort(key=lambda x: x.sequence)
+    return records
 
 
 def _compare_lists(list_a: List, list_b: List, label: str):
     """Compare two lists of elements and print results."""
     max_len = max(len(list_a), len(list_b))
-
     for i in range(max_len):
         if i >= len(list_a):
             comparator = MissingInAComparator(list_b[i])
@@ -122,100 +74,90 @@ def _compare_lists(list_a: List, list_b: List, label: str):
             comparator = MissingInBComparator(list_a[i])
         else:
             comparator = create_comparator(list_a[i], list_b[i])
-
         left_info, right_info = comparator.get_type_info()
         result = comparator.compare()
         log = format_comparison_result(result)
         print(f"  {label}[{i}] | {left_info} | {right_info} | {log}")
 
 
-def _find_lcs_matches(dumps_a: List[OperatorDump], dumps_b: List[OperatorDump]) -> List[Tuple[int, int]]:
-    """
-    Find LCS matches between two dump lists and print matching info.
+def _compare_kwargs(kwargs_a: dict, kwargs_b: dict, label: str):
+    """Compare two kwargs dicts by key and print results."""
+    all_keys = sorted(set(list(kwargs_a.keys()) + list(kwargs_b.keys())))
+    for key in all_keys:
+        key_label = f"{label}[{key}]"
+        if key not in kwargs_a:
+            comparator = MissingInAComparator(kwargs_b[key])
+        elif key not in kwargs_b:
+            comparator = MissingInBComparator(kwargs_a[key])
+        else:
+            comparator = create_comparator(kwargs_a[key], kwargs_b[key])
+        left_info, right_info = comparator.get_type_info()
+        result = comparator.compare()
+        log = format_comparison_result(result)
+        print(f"  {key_label} | {left_info} | {right_info} | {log}")
 
-    Args:
-        dumps_a: First dump list
-        dumps_b: Second dump list
 
-    Returns:
-        List of matched pairs (idx_a, idx_b)
-    """
-    sigs_a = [format_signature(d) for d in dumps_a]
-    sigs_b = [format_signature(d) for d in dumps_b]
-
+def _find_lcs_matches(records_a: list, records_b: list) -> List[Tuple[int, int]]:
+    sigs_a = [format_signature(d) for d in records_a]
+    sigs_b = [format_signature(d) for d in records_b]
     lcs_len, matched_pairs = _lcs_length(sigs_a, sigs_b)
-
-    a_only = len(dumps_a) - lcs_len
-    b_only = len(dumps_b) - lcs_len
+    a_only = len(records_a) - lcs_len
+    b_only = len(records_b) - lcs_len
     print(f"[LCS] Matched: {lcs_len} operators | A-only: {a_only} | B-only: {b_only}")
-
     prev_a, prev_b = 0, 0
     for idx_a, idx_b in matched_pairs:
-        # 不匹配部分：先打印 A 信息，再打印 B 信息
         for i in range(prev_a, idx_a):
-            key_a = format_display_key(dumps_a[i])
+            key_a = format_display_key(records_a[i])
             print(f"[SKIP] A[{i}] {key_a} <-> <empty>")
-
         for j in range(prev_b, idx_b):
-            key_b = format_display_key(dumps_b[j])
+            key_b = format_display_key(records_b[j])
             print(f"[SKIP] <empty> <-> B[{j}] {key_b}")
-
-        # 配对部分：打印配对信息
-        key_a = format_display_key(dumps_a[idx_a])
-        key_b = format_display_key(dumps_b[idx_b])
+        key_a = format_display_key(records_a[idx_a])
+        key_b = format_display_key(records_b[idx_b])
         print(f"[MATCH] A[{idx_a}] {key_a} <-> B[{idx_b}] {key_b}")
-
         prev_a = idx_a + 1
         prev_b = idx_b + 1
-
-    # 剩余不匹配部分
-    for i in range(prev_a, len(dumps_a)):
-        key_a = format_display_key(dumps_a[i])
+    for i in range(prev_a, len(records_a)):
+        key_a = format_display_key(records_a[i])
         print(f"[SKIP] A[{i}] {key_a} <-> <empty>")
-
-    for j in range(prev_b, len(dumps_b)):
-        key_b = format_display_key(dumps_b[j])
+    for j in range(prev_b, len(records_b)):
+        key_b = format_display_key(records_b[j])
         print(f"[SKIP] <empty> <-> B[{j}] {key_b}")
-
     return matched_pairs
 
 
-def _compare_matched_pairs(dumps_a: List[OperatorDump], dumps_b: List[OperatorDump], matched_pairs: List[Tuple[int, int]]):
-    """
-    Compare matched dump pairs and print detailed results.
-
-    Args:
-        dumps_a: First dump list
-        dumps_b: Second dump list
-        matched_pairs: List of matched index pairs
-    """
-    print(f"[COMPARE] Starting detailed comparison of {len(matched_pairs)} matched pairs...")
-
-    for idx_a, idx_b in matched_pairs:
-        dump_a = dumps_a[idx_a]
-        dump_b = dumps_b[idx_b]
-
-        filename_a = format_dump_filename(dump_a)
-        filename_b = format_dump_filename(dump_b)
+def _compare_matched_pairs(records_a: list, records_b: list, matched_pairs, storage_a: str, storage_b: str):
+    total = len(matched_pairs)
+    start_time = time.time()
+    print(f"[COMPARE] Starting detailed comparison of {total} matched pairs...")
+    for idx, (idx_a, idx_b) in enumerate(matched_pairs, 1):
+        elapsed = time.time() - start_time
+        avg_time = elapsed / idx if idx > 0 else 0
+        eta_seconds = avg_time * (total - idx)
+        print(f"[COMPARE {idx}/{total} | ETA: {format_eta(eta_seconds)}]")
+        rec_a = records_a[idx_a]
+        rec_b = records_b[idx_b]
+        filename_a = format_dump_filename(rec_a)
+        filename_b = format_dump_filename(rec_b)
         print(f"{filename_a} <-> {filename_b}")
-
-        _compare_lists(dump_a.inputs, dump_b.inputs, "Inputs")
-        _compare_lists(dump_a.outputs, dump_b.outputs, "Outputs")
+        session_dir_a = os.path.dirname(storage_a)
+        session_dir_b = os.path.dirname(storage_b)
+        pkl_path_a = os.path.join(session_dir_a, filename_a.replace('.json', '.pkl'))
+        pkl_path_b = os.path.join(session_dir_b, filename_b.replace('.json', '.pkl'))
+        inputs_a, outputs_a = SerializationSession.load_data(pkl_path_a, storage_a)
+        inputs_b, outputs_b = SerializationSession.load_data(pkl_path_b, storage_b)
+        _compare_lists(inputs_a['args'], inputs_b['args'], "Inputs.args")
+        _compare_kwargs(inputs_a['kwargs'], inputs_b['kwargs'], "Inputs.kwargs")
+        _compare_lists(outputs_a, outputs_b, "Outputs")
 
 
 def ops_comp(dump_dir_a: str, dump_dir_b: str):
-    """
-    Compare two operator dump sessions.
-
-    Args:
-        dump_dir_a: Path to first dump directory
-        dump_dir_b: Path to second dump directory
-    """
-    dumps_a = _load_dumps(dump_dir_a)
-    print(f"[LCS] Loading dump A: {len(dumps_a)} operators from {dump_dir_a}")
-    dumps_b = _load_dumps(dump_dir_b)
-    print(f"[LCS] Loading dump B: {len(dumps_b)} operators from {dump_dir_b}")
-
-    matched_pairs = _find_lcs_matches(dumps_a, dumps_b)
-
-    _compare_matched_pairs(dumps_a, dumps_b, matched_pairs)
+    """Compare two operator dump sessions."""
+    records_a = _load_all_metadata(dump_dir_a)
+    print(f"[LCS] Loading dump A: {len(records_a)} operators from {dump_dir_a}")
+    records_b = _load_all_metadata(dump_dir_b)
+    print(f"[LCS] Loading dump B: {len(records_b)} operators from {dump_dir_b}")
+    matched_pairs = _find_lcs_matches(records_a, records_b)
+    storage_a = os.path.join(dump_dir_a, 'storage')
+    storage_b = os.path.join(dump_dir_b, 'storage')
+    _compare_matched_pairs(records_a, records_b, matched_pairs, storage_a, storage_b)
