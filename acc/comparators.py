@@ -80,7 +80,18 @@ class TensorComparator(ElementComparator):
         shape_a = list(self.a.shape)
         dtype_b = str(self.b.dtype)
         shape_b = list(self.b.shape)
-        return f"tensor(dtype={dtype_a}, shape={shape_a})", f"tensor(dtype={dtype_b}, shape={shape_b})"
+
+        a_nan = torch.isnan(self.a).any().item()
+        a_inf = torch.isinf(self.a).any().item()
+        a_neg_inf = a_inf and (self.a < 0).any().item()
+
+        b_nan = torch.isnan(self.b).any().item()
+        b_inf = torch.isinf(self.b).any().item()
+        b_neg_inf = b_inf and (self.b < 0).any().item()
+
+        desc_a = f"tensor(dtype={dtype_a}, shape={shape_a}, nan={a_nan}, inf={a_inf}, neg_inf={a_neg_inf})"
+        desc_b = f"tensor(dtype={dtype_b}, shape={shape_b}, nan={b_nan}, inf={b_inf}, neg_inf={b_neg_inf})"
+        return desc_a, desc_b
 
     def compare(self) -> Dict:
         a = torch.from_numpy(self.a) if isinstance(self.a, np.ndarray) else self.a
@@ -160,7 +171,23 @@ class NumpyComparator(TensorComparator):
     """Compare two numpy arrays (uses TensorComparator logic)."""
 
     def get_type_info(self) -> Tuple[str, str]:
-        return f"numpy(dtype={self.a.dtype}, shape={list(self.a.shape)})", f"numpy(dtype={self.b.dtype}, shape={list(self.b.shape)})"
+        import numpy as np
+        dtype_a = str(self.a.dtype)
+        shape_a = list(self.a.shape)
+        dtype_b = str(self.b.dtype)
+        shape_b = list(self.b.shape)
+
+        a_nan = bool(np.isnan(self.a).any())
+        a_inf = bool(np.isinf(self.a).any())
+        a_neg_inf = a_inf and bool((self.a < 0).any())
+
+        b_nan = bool(np.isnan(self.b).any())
+        b_inf = bool(np.isinf(self.b).any())
+        b_neg_inf = b_inf and bool((self.b < 0).any())
+
+        desc_a = f"numpy(dtype={dtype_a}, shape={shape_a}, nan={a_nan}, inf={a_inf}, neg_inf={a_neg_inf})"
+        desc_b = f"numpy(dtype={dtype_b}, shape={shape_b}, nan={b_nan}, inf={b_inf}, neg_inf={b_neg_inf})"
+        return desc_a, desc_b
 
 
 class UnsupportedComparator(ElementComparator):
