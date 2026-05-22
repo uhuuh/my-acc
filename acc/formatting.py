@@ -105,9 +105,9 @@ def format_display_key(dump: OperatorRecord) -> str:
 def format_dump_filename(dump: OperatorRecord) -> str:
     """Format dump filename for comparison log."""
     filename_safe = _sanitize_filename(dump.filename)
-    func_name = dump.function
+    func_name_safe = _sanitize_filename(dump.function)
     opname_safe = _sanitize_opname(dump.opname)
-    return f"{dump.sequence:06d}__{filename_safe}__{func_name}__{opname_safe}.json"
+    return f"{dump.sequence:06d}__{filename_safe}__{func_name_safe}__{opname_safe}.json"
 
 
 def format_signature(dump: OperatorRecord) -> str:
