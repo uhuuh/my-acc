@@ -10,7 +10,8 @@ import torch
 import tempfile
 import json
 import pickle
-from acc import ops_dump, ops_comp
+from acc import ops_dump, ops_comp, SerializationSession
+from acc.cache import CacheEntry, CacheManager
 
 
 def test_saves_operator_outputs():
@@ -50,19 +51,19 @@ def test_saves_operator_outputs():
                 print(f"PKL data structure: {type(data)}")
                 print(f"PKL data keys/length: {len(data) if isinstance(data, (list, dict)) else 'scalar'}")
 
-                # The last item should be the output
-                if isinstance(data, list) and len(data) > 0:
-                    last_item = data[-1]
-                    if isinstance(last_item, dict) and 'outputs' in last_item:
-                        outputs = last_item['outputs']
-                        print(f"Outputs found: {outputs}")
-                        assert len(outputs) > 0, "Outputs should not be empty"
-                        assert isinstance(outputs[0], torch.Tensor), "Output should be a tensor"
-                        print("PASS: Outputs are saved correctly")
-                        return
-                    else:
-                        # Check if data contains outputs directly
-                        print(f"Last item type: {type(last_item)}")
+                # New structure: {'inputs': {'args': [...], 'kwargs': {...}}, 'outputs': [...]}
+                if isinstance(data, dict) and 'outputs' in data:
+                    outputs = data['outputs']
+                    print(f"Outputs found: {outputs}")
+                    assert len(outputs) > 0, "Outputs should not be empty"
+                    # Outputs may be CacheEntry objects, resolve them
+                    storage_dir = os.path.join(session_dir, 'storage')
+                    cache_mgr = CacheManager(storage_dir, enable_cache=False)
+                    resolved_outputs = [cache_mgr.resolve(o) if isinstance(o, CacheEntry) else o for o in outputs]
+                    assert isinstance(resolved_outputs[0], torch.Tensor), "Output should be a tensor"
+                    print(f"Resolved output tensor shape: {resolved_outputs[0].shape}")
+                    print("PASS: Outputs are saved correctly")
+                    return
 
                 # If we didn't find outputs in expected structure, fail the test
                 assert False, f"Outputs not found in PKL data. Data structure: {data}"

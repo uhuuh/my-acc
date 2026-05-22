@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch
 import tempfile
-from acc import ops_dump, ops_comp
+from acc import ops_dump, ops_comp, SerializationSession
 
 
 def test_ops_dump_context_manager():
