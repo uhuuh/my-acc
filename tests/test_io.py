@@ -203,7 +203,7 @@ sys.exit(0)
         [sys.executable, '-c', test_script],
         capture_output=True,
         text=True,
-        cwd="C:/Users/uh/study/my-acc"
+        cwd=os.getcwd()
     )
 
     # Should see warning in stderr or stdout

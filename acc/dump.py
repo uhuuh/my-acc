@@ -98,17 +98,26 @@ class ops_dump(TorchDispatchMode):
         self.enable_async_io = enable_async_io
         self.session = SerializationSession(dump_path, max_tensor_size_mb, enable_cache, enable_async_io)
         self.enabled = os.environ.get('ACC_DUMP_ENABLED', '1').lower() not in ('0', 'false', 'no', 'off')
+        self._is_nested = False  # Flag to track if this is a nested dump
 
     def __enter__(self):
         global _active_session
         if not self.enabled:
             return super().__enter__()
+        # Check if there's already an active session - nested dump should be ignored
+        if _active_session is not None:
+            print(f"[DUMP WARN] Nested ops_dump ignored, all operators will be captured by outer session")
+            self._is_nested = True
+            return self  # Don't enter TorchDispatchMode for nested dump
         self.session.start()
         _active_session = self.session
         return super().__enter__()
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         global _active_session
+        if self._is_nested:
+            # Nested dump - don't do anything, outer session handles everything
+            return False
         if self.enabled:
             self.session.end()
             _active_session = None
