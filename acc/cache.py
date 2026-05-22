@@ -2,88 +2,98 @@
 
 import hashlib
 import os
-import pickle
 from dataclasses import dataclass
-from typing import Any, List, Set, Optional
+from typing import Any, List, Dict, Callable, Optional
 
 import numpy as np
 import torch
+
+from .io import IOWriter
 
 
 @dataclass
 class CacheEntry:
     """Metadata for a cached tensor/numpy array."""
-    cache_id: str        # content hash (blake2b hex digest)
-    type: str            # 'tensor' or 'numpy'
-    dtype: str           # e.g. 'float32', 'int64'
-    shape: List[int]     # tensor/array shape
+    cache_id: str    # 存储块 hash (blake2b)
+    type: str        # 'tensor' or 'numpy'
+    dtype: str       # e.g. 'float32', 'int64'
+    shape: List[int] # tensor/array shape
+
+    @classmethod
+    def from_obj(cls, obj: Any) -> 'CacheEntry':
+        """从 tensor/numpy 创建 CacheEntry"""
+        storage = _extract_storage(obj)
+        return cls(
+            cache_id=_compute_hash(storage),
+            type='tensor' if isinstance(obj, torch.Tensor) else 'numpy',
+            dtype=str(obj.dtype).replace('torch.', ''),
+            shape=list(obj.shape)
+        )
+
+    def to_obj(self, storage: np.ndarray) -> Any:
+        """从存储块重建 tensor/numpy"""
+        if self.type == 'tensor':
+            t = torch.from_numpy(storage)
+            if list(t.shape) != self.shape:
+                t = t.reshape(self.shape)
+            return t
+        else:
+            if list(storage.shape) != self.shape:
+                storage = storage.reshape(self.shape)
+            return storage
+
+
+def _extract_storage(obj: Any) -> np.ndarray:
+    """从 tensor/numpy 中提取存储块（numpy array）"""
+    if isinstance(obj, torch.Tensor):
+        return obj.detach().contiguous().cpu().numpy()
+    return obj
+
+
+def _compute_hash(storage: np.ndarray) -> str:
+    """计算存储块的 BLAKE2b 哈希"""
+    return hashlib.blake2b(storage.tobytes(), digest_size=32).hexdigest()
 
 
 class CacheManager:
-    """Content-addressable tensor/numpy cache backed by a storage directory."""
+    """Content-addressable tensor/numpy cache."""
 
-    def __init__(self, storage_dir: str, enable_cache: bool = True, io_writer: Optional[Any] = None):
-        self.storage_dir = storage_dir
-        self.enable_cache = enable_cache
-        self._cached_ids: Set[str] = set()
+    def __init__(self, cache_dir: str, io_writer: Optional[IOWriter] = None):
+        self.cache_dir = cache_dir
         self._io_writer = io_writer
+        self._save_cache_map: Dict[str, bool] = {}  # cache_id -> 是否已写入
+        self._load_cache_map: Dict[str, np.ndarray] = {}  # cache_id -> 存储块
 
-    def get_or_cache(self, obj: Any) -> Any:
-        """Cache tensor/numpy by content hash. Returns CacheEntry or original object."""
-        if not self.enable_cache:
-            return obj
-        if not isinstance(obj, (torch.Tensor, np.ndarray)):
-            return obj
-        cache_id = self._compute_content_hash(obj)
-        if cache_id in self._cached_ids:
-            return CacheEntry(
-                cache_id=cache_id,
-                type='tensor' if isinstance(obj, torch.Tensor) else 'numpy',
-                dtype=str(obj.dtype).replace('torch.', ''),
-                shape=list(obj.shape),
-            )
-        self._cached_ids.add(cache_id)
-        self._save_to_storage(obj, cache_id)
-        return CacheEntry(
-            cache_id=cache_id,
-            type='tensor' if isinstance(obj, torch.Tensor) else 'numpy',
-            dtype=str(obj.dtype).replace('torch.', ''),
-            shape=list(obj.shape),
-        )
+    def save(self, data: Any) -> Any:
+        """遍历 data，将 tensor/numpy 替换为 CacheEntry，首次写入文件"""
+        def processor(obj: Any) -> Any:
+            if not isinstance(obj, (torch.Tensor, np.ndarray)):
+                return obj
+            entry = CacheEntry.from_obj(obj)
+            if entry.cache_id not in self._save_cache_map:
+                filepath = os.path.join(self.cache_dir, f"{entry.cache_id}.pkl")
+                self._io_writer.write(filepath, _extract_storage(obj))
+                self._save_cache_map[entry.cache_id] = True
+            return entry
+        return self._traverse(data, processor)
 
-    def resolve(self, obj: Any) -> Any:
-        """Resolve CacheEntry to tensor/numpy, recursively handling nested structures."""
-        if isinstance(obj, CacheEntry):
-            return self._load_from_storage(obj.cache_id)
-        if isinstance(obj, list):
-            return [self.resolve(item) for item in obj]
-        if isinstance(obj, dict):
-            return {k: self.resolve(v) for k, v in obj.items()}
-        if isinstance(obj, tuple):
-            return tuple(self.resolve(item) for item in obj)
-        return obj
+    def load(self, data: Any) -> Any:
+        """遍历 data，将 CacheEntry 还原为 tensor/numpy，首次从文件加载"""
+        def processor(obj: Any) -> Any:
+            if not isinstance(obj, CacheEntry):
+                return obj
+            if obj.cache_id not in self._load_cache_map:
+                filepath = os.path.join(self.cache_dir, f"{obj.cache_id}.pkl")
+                self._load_cache_map[obj.cache_id] = self._io_writer.read(filepath)
+            return obj.to_obj(self._load_cache_map[obj.cache_id])
+        return self._traverse(data, processor)
 
-    def _compute_content_hash(self, obj) -> str:
-        """Compute BLAKE2b hash of tensor/numpy content bytes."""
-        if isinstance(obj, torch.Tensor):
-            arr = obj.detach().contiguous().cpu().numpy()
-        else:
-            arr = obj
-        return hashlib.blake2b(arr.tobytes(), digest_size=32).hexdigest()
-
-    def _save_to_storage(self, obj, cache_id: str):
-        """Save tensor/numpy to storage/{cache_id}.pkl."""
-        filepath = os.path.join(self.storage_dir, f"{cache_id}.pkl")
-        if isinstance(obj, torch.Tensor):
-            obj = obj.detach().contiguous().cpu()
-        if self._io_writer is not None:
-            self._io_writer.write(filepath, obj)
-        else:
-            with open(filepath, 'wb') as f:
-                pickle.dump(obj, f)
-
-    def _load_from_storage(self, cache_id: str) -> Any:
-        """Load tensor/numpy from storage/{cache_id}.pkl."""
-        filepath = os.path.join(self.storage_dir, f"{cache_id}.pkl")
-        with open(filepath, 'rb') as f:
-            return pickle.load(f)
+    def _traverse(self, data: Any, processor: Callable[[Any], Any]) -> Any:
+        """递归遍历 dict/list/tuple，对非容器元素调用 processor"""
+        if isinstance(data, dict):
+            return {k: self._traverse(v, processor) for k, v in data.items()}
+        if isinstance(data, list):
+            return [self._traverse(item, processor) for item in data]
+        if isinstance(data, tuple):
+            return tuple(self._traverse(item, processor) for item in data)
+        return processor(data)

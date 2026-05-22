@@ -4,7 +4,6 @@ Serialization helpers and data structures for PyTorch Operator Dump Tool.
 
 import os
 import json
-import pickle
 import time
 import uuid
 import traceback
@@ -189,11 +188,11 @@ class SerializationSession:
         json_path = os.path.join(self.session_dir, json_filename)
         pkl_path = os.path.join(self.session_dir, pkl_filename)
         try:
-            self._io_writer.write(json_path, {
+            self._io_writer.write(json_path, json.dumps({
                 'sequence': seq, 'filepath': filepath, 'filename': filename,
                 'function': function, 'lineno': lineno, 'opname': str(func),
                 'call_stack': call_stack
-            })
+            }, indent=2))
             self._io_writer.write(pkl_path, {
                 'inputs': {'args': serialized_args, 'kwargs': serialized_kwargs},
                 'outputs': serialized_outputs,
@@ -209,7 +208,7 @@ class SerializationSession:
     def end(self):
         """End the session and print summary."""
         if self._io_writer is not None:
-            self._io_writer.shutdown()
+            self._io_writer.wait_complete()
         if self.session_dir:
             elapsed = time.time() - self._start_time if self._start_time else 0
             print(f"[DUMP] Session completed: {self.sequence} operators dumped to {self.session_dir} in {elapsed:.1f}s")
