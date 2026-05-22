@@ -49,26 +49,24 @@ def test_large_tensor_replaced_with_none():
                     data = pickle.load(f)
 
                 # Check outputs
-                last_item = data[-1]
-                if isinstance(last_item, dict) and 'outputs' in last_item:
-                    outputs = last_item['outputs']
-                    print(f"Outputs: {outputs}")
+                outputs = data['outputs']
+                print(f"Outputs: {outputs}")
 
-                    # Large input tensor should be None (exceeds 1MB)
-                    assert outputs[0] is None or isinstance(outputs[0], torch.Tensor), \
-                        f"Output should be None or tensor, got {type(outputs[0])}"
+                # Large input tensor should be None (exceeds 1MB)
+                assert outputs[0] is None or isinstance(outputs[0], torch.Tensor), \
+                    f"Output should be None or tensor, got {type(outputs[0])}"
 
-                    if outputs[0] is None:
-                        print("PASS: Large output tensor replaced with None")
+                if outputs[0] is None:
+                    print("PASS: Large output tensor replaced with None")
+                else:
+                    # Check if it's actually small enough
+                    tensor_size_mb = outputs[0].numel() * 4 / (1024 * 1024)
+                    print(f"Output tensor size: {tensor_size_mb:.2f} MB")
+                    if tensor_size_mb <= 1:
+                        print("PASS: Tensor is within size limit")
                     else:
-                        # Check if it's actually small enough
-                        tensor_size_mb = outputs[0].numel() * 4 / (1024 * 1024)
-                        print(f"Output tensor size: {tensor_size_mb:.2f} MB")
-                        if tensor_size_mb <= 1:
-                            print("PASS: Tensor is within size limit")
-                        else:
-                            assert False, f"Large tensor not replaced with None, size: {tensor_size_mb:.2f} MB"
-                    return
+                        assert False, f"Large tensor not replaced with None, size: {tensor_size_mb:.2f} MB"
+                return
 
         assert False, "No add operation found"
 
@@ -124,14 +122,13 @@ def test_contiguous_error_handling():
                 with open(pkl_path, 'rb') as f:
                     data = pickle.load(f)
 
-                # Check outputs - should be normal tensor (within size limit)
-                last_item = data[-1]
-                if isinstance(last_item, dict) and 'outputs' in last_item:
-                    outputs = last_item['outputs']
-                    assert isinstance(outputs[0], torch.Tensor), \
-                        f"Normal tensor output should be saved, got {type(outputs[0])}"
-                    print("PASS: Normal tensor saved correctly")
-                    return
+                # Check outputs - should be CacheEntry (tensor is cached)
+                outputs = data['outputs']
+                from acc.cache import CacheEntry
+                assert isinstance(outputs[0], CacheEntry), \
+                    f"Normal tensor output should be saved as CacheEntry, got {type(outputs[0])}"
+                print("PASS: Normal tensor saved correctly as CacheEntry")
+                return
 
         assert False, "No add operation found"
 

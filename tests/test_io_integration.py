@@ -32,14 +32,15 @@ def test_serialization_session_async_io_disabled():
         assert session._io_writer.enable_async == False
 
 
-def test_serialization_session_default_async_io_disabled():
-    """Test SerializationSession defaults to async IO disabled"""
+def test_serialization_session_default_async_io_enabled():
+    """Test SerializationSession defaults to async IO enabled"""
     with tempfile.TemporaryDirectory() as tmpdir:
         session = SerializationSession(tmpdir)
         session.start()
 
         session.end()
 
-        # By default, async IO should be disabled
+        # By default, async IO should be enabled
         assert hasattr(session, '_io_writer')
-        assert session._io_writer is None
+        assert session._io_writer is not None
+        assert session._io_writer.enable_async == True

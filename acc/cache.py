@@ -4,7 +4,7 @@ import hashlib
 import os
 import pickle
 from dataclasses import dataclass
-from typing import Any, List, Set
+from typing import Any, List, Set, Optional
 
 import numpy as np
 import torch
@@ -22,10 +22,11 @@ class CacheEntry:
 class CacheManager:
     """Content-addressable tensor/numpy cache backed by a storage directory."""
 
-    def __init__(self, storage_dir: str, enable_cache: bool = True):
+    def __init__(self, storage_dir: str, enable_cache: bool = True, io_writer: Optional[Any] = None):
         self.storage_dir = storage_dir
         self.enable_cache = enable_cache
         self._cached_ids: Set[str] = set()
+        self._io_writer = io_writer
 
     def get_or_cache(self, obj: Any) -> Any:
         """Cache tensor/numpy by content hash. Returns CacheEntry or original object."""
@@ -75,8 +76,11 @@ class CacheManager:
         filepath = os.path.join(self.storage_dir, f"{cache_id}.pkl")
         if isinstance(obj, torch.Tensor):
             obj = obj.detach().contiguous().cpu()
-        with open(filepath, 'wb') as f:
-            pickle.dump(obj, f)
+        if self._io_writer is not None:
+            self._io_writer.write(filepath, obj)
+        else:
+            with open(filepath, 'wb') as f:
+                pickle.dump(obj, f)
 
     def _load_from_storage(self, cache_id: str) -> Any:
         """Load tensor/numpy from storage/{cache_id}.pkl."""

@@ -151,10 +151,10 @@ class SerializationSession:
         os.makedirs(self.session_dir, exist_ok=False)
         storage_dir = os.path.join(self.session_dir, 'storage')
         os.makedirs(storage_dir, exist_ok=False)
-        self._cache_manager = CacheManager(storage_dir, self._enable_cache)
-        # Initialize IOWriter if enable_async_io is explicitly set
-        if self._enable_async_io is not None:
-            self._io_writer = IOWriter(enable_async=self._enable_async_io)
+        # Initialize IOWriter (default: async enabled)
+        async_enabled = self._enable_async_io if self._enable_async_io is not None else True
+        self._io_writer = IOWriter(enable_async=async_enabled)
+        self._cache_manager = CacheManager(storage_dir, self._enable_cache, io_writer=self._io_writer)
         self.sequence = 0
         self._start_time = time.time()
         print(f"[DUMP] Created session directory: {self.session_dir}")
@@ -189,17 +189,15 @@ class SerializationSession:
         json_path = os.path.join(self.session_dir, json_filename)
         pkl_path = os.path.join(self.session_dir, pkl_filename)
         try:
-            with open(json_path, 'w') as f:
-                json.dump({
-                    'sequence': seq, 'filepath': filepath, 'filename': filename,
-                    'function': function, 'lineno': lineno, 'opname': str(func),
-                    'call_stack': call_stack
-                }, f, indent=2)
-            with open(pkl_path, 'wb') as f:
-                pickle.dump({
-                    'inputs': {'args': serialized_args, 'kwargs': serialized_kwargs},
-                    'outputs': serialized_outputs,
-                }, f)
+            self._io_writer.write(json_path, {
+                'sequence': seq, 'filepath': filepath, 'filename': filename,
+                'function': function, 'lineno': lineno, 'opname': str(func),
+                'call_stack': call_stack
+            })
+            self._io_writer.write(pkl_path, {
+                'inputs': {'args': serialized_args, 'kwargs': serialized_kwargs},
+                'outputs': serialized_outputs,
+            })
         except Exception as e:
             print(f"[DUMP ERROR] {seq:06d} | {filename}:{lineno} | {func} | {e}")
             self.sequence += 1
