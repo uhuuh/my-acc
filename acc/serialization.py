@@ -15,6 +15,7 @@ from typing import Any, List, Dict, Tuple, Optional
 import torch
 
 from .cache import CacheEntry, CacheManager
+from .io import IOWriter
 
 
 @dataclass
@@ -122,13 +123,15 @@ def _serialize_outputs(result, max_tensor_size_mb: int, cache_mgr: CacheManager)
 class SerializationSession:
     """Manages a single serialization session, integrating CacheManager."""
 
-    def __init__(self, dump_path: str, max_tensor_size_mb: int = 10240, enable_cache: bool = True):
+    def __init__(self, dump_path: str, max_tensor_size_mb: int = 10240, enable_cache: bool = True, enable_async_io: Optional[bool] = None):
         self.dump_path = dump_path
         self.session_dir: Optional[str] = None
         self.sequence: int = 0
         self.max_tensor_size_mb: int = max_tensor_size_mb
         self._enable_cache: bool = enable_cache
+        self._enable_async_io: Optional[bool] = enable_async_io
         self._cache_manager: Optional[CacheManager] = None
+        self._io_writer: Optional[IOWriter] = None
         self._start_time: Optional[float] = None
 
     def start(self) -> str:
@@ -149,6 +152,9 @@ class SerializationSession:
         storage_dir = os.path.join(self.session_dir, 'storage')
         os.makedirs(storage_dir, exist_ok=False)
         self._cache_manager = CacheManager(storage_dir, self._enable_cache)
+        # Initialize IOWriter if enable_async_io is explicitly set
+        if self._enable_async_io is not None:
+            self._io_writer = IOWriter(enable_async=self._enable_async_io)
         self.sequence = 0
         self._start_time = time.time()
         print(f"[DUMP] Created session directory: {self.session_dir}")
@@ -204,6 +210,8 @@ class SerializationSession:
 
     def end(self):
         """End the session and print summary."""
+        if self._io_writer is not None:
+            self._io_writer.shutdown()
         if self.session_dir:
             elapsed = time.time() - self._start_time if self._start_time else 0
             print(f"[DUMP] Session completed: {self.sequence} operators dumped to {self.session_dir} in {elapsed:.1f}s")
