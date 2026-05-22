@@ -16,4 +16,6 @@ def test_iowriter_constructor_sync_mode():
     writer = IOWriter(enable_async=False)
     assert writer.enable_async == False
     assert hasattr(writer, '_pending_files')
+    assert writer._loop is None
+    assert writer._thread is None
     writer.shutdown()
