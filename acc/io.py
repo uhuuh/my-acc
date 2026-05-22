@@ -91,12 +91,18 @@ class IOWriter:
             return
 
         if self._loop and self._thread:
-            # Wait for pending files to complete (with timeout)
-            timeout = 5.0
+            # Wait for pending files to complete
             start = time.time()
-            while self._pending_files and (time.time() - start) < timeout:
+            timeout = 5.0
+
+            while (time.time() - start) < timeout:
+                with self._lock:
+                    pending_count = len(self._pending_files)
+                if pending_count == 0:
+                    break
                 time.sleep(0.01)
 
+            # Stop loop
             self._loop.call_soon_threadsafe(self._loop.stop)
             self._thread.join(timeout=5)
 
@@ -145,14 +151,26 @@ class IOWriter:
         if parent_dir:
             os.makedirs(parent_dir, exist_ok=True)
 
-        # Auto-serialize based on extension
-        if file_path.endswith('.json'):
-            with open(file_path, 'w') as f:
-                json.dump(content, f, indent=2)
-        elif file_path.endswith('.pkl'):
-            with open(file_path, 'wb') as f:
-                pickle.dump(content, f)
-        else:
-            # Default: write as text
-            with open(file_path, 'w') as f:
-                f.write(str(content))
+        # Write to temp file first, then atomic rename
+        temp_path = file_path + '.tmp'
+        try:
+            # Auto-serialize based on extension
+            if file_path.endswith('.json'):
+                with open(temp_path, 'w') as f:
+                    json.dump(content, f, indent=2)
+            elif file_path.endswith('.pkl'):
+                with open(temp_path, 'wb') as f:
+                    pickle.dump(content, f)
+            else:
+                # Default: write as text
+                with open(temp_path, 'w') as f:
+                    f.write(str(content))
+
+            # Atomic rename on success
+            os.replace(temp_path, file_path)
+        except Exception as e:
+            # Clean up temp file on error
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+            print(f"[IO ERROR] Failed to write {file_path}: {e}")
+            raise
