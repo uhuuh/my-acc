@@ -1,16 +1,16 @@
 """
-AsyncIO-based IO Layer for PyTorch Operator Dump Tool.
-Provides async file writing to avoid blocking main thread.
+Simple IO Layer for PyTorch Operator Dump Tool.
+Uses a queue-based worker thread for non-blocking file writes.
 """
 
-import asyncio
 import json
 import os
 import pickle
+import queue
 import time
 import torch
-from typing import Any, Set, Optional, Callable, Dict, Tuple
 import threading
+from typing import Any, Set, Optional, Dict, Tuple, Callable
 
 
 class FileHandler:
@@ -63,74 +63,66 @@ class FileHandler:
 
 
 class IOWriter:
-    """IO Writer with async loop for concurrent file writes."""
+    """IO Writer with a background thread for async file writes."""
 
     def __init__(self, enable_async: bool = True, monitor_interval: float = 5.0):
         self.enable_async = enable_async
         self._pending_files: Set[str] = set()
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._thread: Optional[threading.Thread] = None
         self._monitor_interval = monitor_interval
         self._bytes_written = 0
         self._last_monitor_time = time.time()
-
         self._handler = FileHandler()
 
         if enable_async:
-            self._loop = asyncio.new_event_loop()
-            self._thread = threading.Thread(target=self._run_loop, daemon=True)
+            self._queue: queue.Queue = queue.Queue()
+            self._thread = threading.Thread(target=self._worker, daemon=True)
             self._thread.start()
-            asyncio.run_coroutine_threadsafe(asyncio.sleep(0), self._loop).result()
+        else:
+            self._thread = None
 
     @property
     def handler(self) -> FileHandler:
-        """Expose the underlying FileHandler for custom registration."""
         return self._handler
 
-    def _run_loop(self):
-        asyncio.set_event_loop(self._loop)
-        self._loop.run_forever()
-        self._loop.close()
+    def _worker(self):
+        while True:
+            item = self._queue.get()
+            if item is None:
+                self._queue.task_done()
+                break
+            file_path, content = item
+            try:
+                self._handler.write(file_path, content)
+                self._bytes_written += os.path.getsize(file_path)
+                self._check_monitor()
+            except Exception as e:
+                print(f"[IO ERROR] Failed to write {file_path}: {e}")
+            finally:
+                self._pending_files.discard(file_path)
+                self._queue.task_done()
 
-    def wait_complete(self, timeout: float = 5.0):
-        """Wait for pending writes, then stop loop."""
+    def wait_complete(self, timeout: float = 1.0):
         if not self.enable_async:
+            print("[IO] All writes completed")
             return
-        while timeout > 0 and len(self._pending_files) > 0:
-            time.sleep(0.05)
-            timeout -= 0.05
-        self._loop.call_soon_threadsafe(self._loop.stop)
-        self._thread.join(timeout=1)
+        self._queue.put(None)
+        while self._thread.is_alive():
+            self._thread.join(timeout=timeout)
+            print(f"[IO] Waited {timeout}s for worker thread")
+        print("[IO] All writes completed")
 
     def write(self, file_path: str, content):
-        """Write file. Async if enabled, otherwise sync."""
         if self.enable_async:
             self._pending_files.add(file_path)
-            asyncio.run_coroutine_threadsafe(self._write_async(file_path, content), self._loop)
+            self._queue.put((file_path, content))
         else:
-            self._write_sync(file_path, content)
-
-    def _write_sync(self, file_path: str, content):
-        """Synchronous write via FileHandler."""
-        self._handler.write(file_path, content)
-        self._bytes_written += os.path.getsize(file_path)
-
-    async def _write_async(self, file_path: str, content):
-        """Async write task."""
-        try:
-            await asyncio.get_event_loop().run_in_executor(None, self._write_sync, file_path, content)
-            self._check_monitor()
-        except Exception as e:
-            print(f"[IO ERROR] Failed to write {file_path}: {e}")
-        finally:
-            self._pending_files.discard(file_path)
+            self._handler.write(file_path, content)
+            self._bytes_written += os.path.getsize(file_path)
 
     def read(self, file_path: str):
-        """Read file via FileHandler extension dispatch."""
         return self._handler.read(file_path)
 
     def _check_monitor(self):
-        """检查并打印监控日志"""
         now = time.time()
         elapsed = now - self._last_monitor_time
         if elapsed >= self._monitor_interval:
@@ -142,7 +134,6 @@ class IOWriter:
             self._last_monitor_time = now
 
     def _format_bytes(self, bytes_per_sec: float) -> str:
-        """格式化字节吞吐，带千分位符号"""
         units = ['B', 'KB', 'MB', 'GB']
         value = bytes_per_sec
         unit_idx = 0

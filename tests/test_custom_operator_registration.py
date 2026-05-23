@@ -42,53 +42,45 @@ def test_torch_library_explicit_autograd():
     print("=" * 60)
 
     try:
-        # 定义自定义算子
         torch.library.define(
             "explicit_ops::custom_add",
             "(Tensor a, Tensor b) -> Tensor"
         )
+    except Exception:
+        pass  # Already defined
 
-        # 实现自定义算子 - 使用 CompositeExplicitAutograd
-        @torch.library.impl("explicit_ops::custom_add", "CompositeExplicitAutograd")
-        def custom_add_impl(a, b):
-            # 内部调用多个原生算子
-            y = torch.add(a, b)
-            y = torch.mul(y, 2.0)
-            y = torch.relu(y)
-            return y
+    @torch.library.impl("explicit_ops::custom_add", "CompositeExplicitAutograd")
+    def custom_add_impl(a, b):
+        y = torch.add(a, b)
+        y = torch.mul(y, 2.0)
+        y = torch.relu(y)
+        return y
 
-        # 测试 dump
-        with tempfile.TemporaryDirectory() as tmpdir:
-            a = torch.randn(3, 3)
-            b = torch.randn(3, 3)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        a = torch.randn(3, 3)
+        b = torch.randn(3, 3)
 
-            with ops_dump(tmpdir) as dumper:
-                result = torch.ops.explicit_ops.custom_add(a, b)
+        with ops_dump(tmpdir) as dumper:
+            result = torch.ops.explicit_ops.custom_add(a, b)
 
-            dump_dirs = [d for d in os.listdir(tmpdir) if os.path.isdir(os.path.join(tmpdir, d))]
-            session_dir = os.path.join(tmpdir, dump_dirs[0])
-            opnames = get_opnames_from_dump(session_dir)
+        dump_dirs = [d for d in os.listdir(tmpdir) if os.path.isdir(os.path.join(tmpdir, d))]
+        session_dir = os.path.join(tmpdir, dump_dirs[0])
+        opnames = get_opnames_from_dump(session_dir)
 
-            print(f"Captured {len(opnames)} operators: {opnames}")
+        print(f"Captured {len(opnames)} operators: {opnames}")
 
-            # 现在 CompositeExplicitAutograd 也捕获内部算子
-            assert len(opnames) >= 4, "Should capture at least 4 operators (add, mul, relu, custom)"
+        assert len(opnames) >= 4, "Should capture at least 4 operators (add, mul, relu, custom)"
 
-            # 验证捕获了自定义算子
-            custom_op_found = any('custom_add' in op.lower() for op in opnames)
-            print(f"Custom operator captured: {custom_op_found}")
+        custom_op_found = any('custom_add' in op.lower() for op in opnames)
+        print(f"Custom operator captured: {custom_op_found}")
 
-            # 验证内部算子被捕获（新行为）
-            expected_ops = ['add', 'mul', 'relu']
-            for expected in expected_ops:
-                found = any(expected in op.lower() for op in opnames)
-                assert found, f"Expected {expected} operator not found"
-                print(f"PASS: Found {expected}")
+        expected_ops = ['add', 'mul', 'relu']
+        for expected in expected_ops:
+            found = any(expected in op.lower() for op in opnames)
+            assert found, f"Expected {expected} operator not found"
+            print(f"PASS: Found {expected}")
 
-            print("PASS: CompositeExplicitAutograd internal operators captured via wrap\n")
-
-    except Exception as e:
-        print(f"SKIP: CompositeExplicitAutograd test - {e}\n")
+        print("PASS: CompositeExplicitAutograd internal operators captured via wrap\n")
 
 
 # ============================================================

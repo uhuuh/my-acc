@@ -55,22 +55,13 @@ def _extract_storage(obj: Any) -> torch.Tensor:
 
 
 def _compute_hash(storage: torch.Tensor, mode: str = 'fast') -> str:
-    """计算 cache_id
-
-    Args:
-        storage: tensor 存储块
-        mode: 'fast' 使用地址指针、块大小和版本号，'strict' 使用内容哈希
-
-    Returns:
-        cache_id 字符串
-    """
     if mode == 'fast':
         return f"ptr_{storage.data_ptr()}_{storage.numel()}_{storage._version}"
-    else:
-        # BFloat16 不被 numpy 支持，转为 float32 计算 hash
-        if storage.dtype == torch.bfloat16:
-            storage = storage.float()
-        return hashlib.blake2b(storage.numpy().tobytes(), digest_size=32).hexdigest()
+
+    storage = storage.cpu()
+    if storage.dtype == torch.bfloat16:
+        storage = storage.float()
+    return hashlib.blake2b(storage.numpy().tobytes(), digest_size=32).hexdigest()
 
 
 class CacheManager:
@@ -128,10 +119,22 @@ class CacheManager:
             if not isinstance(obj, (torch.Tensor, np.ndarray)):
                 return obj
             self._save_total += 1
-            entry = CacheEntry.from_obj(obj, self._mode)
+            t = obj.detach().contiguous() if isinstance(obj, torch.Tensor) else torch.from_numpy(obj)
+            cache_id = _compute_hash(t, self._mode)
+            entry = CacheEntry(
+                cache_id=cache_id,
+                type='tensor' if isinstance(obj, torch.Tensor) else 'numpy',
+                dtype=str(obj.dtype).replace('torch.', ''),
+                shape=list(obj.shape)
+            )
             if entry.cache_id not in self._save_cache_map:
                 filepath = os.path.join(self.cache_dir, f"{entry.cache_id}.pt")
-                self._io_writer.write(filepath, _extract_storage(obj))
+                if t.device.type == 'cpu':
+                    write_storage = t
+                else:
+                    write_storage = torch.empty(t.size(), dtype=t.dtype, device='cpu', pin_memory=True)
+                    write_storage.copy_(t, non_blocking=False)
+                self._io_writer.write(filepath, write_storage)
                 self._save_cache_map[entry.cache_id] = True
             else:
                 self._save_hits += 1
