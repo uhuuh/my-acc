@@ -146,7 +146,7 @@ def test_iowriter_concurrent_writes():
             assert data == expected_content
 
 
-def test_iowriter_read_text():
+def test_iowriter_read_json():
     """Test read for JSON file"""
     writer = IOWriter(enable_async=False)
 
@@ -155,7 +155,7 @@ def test_iowriter_read_text():
         content = {"msg": "hello read"}
 
         writer.write(file_path, content)
-        data = json.loads(writer.read(file_path))
+        data = writer.read(file_path)
         assert data == content
 
 

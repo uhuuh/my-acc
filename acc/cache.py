@@ -130,7 +130,7 @@ class CacheManager:
             self._save_total += 1
             entry = CacheEntry.from_obj(obj, self._mode)
             if entry.cache_id not in self._save_cache_map:
-                filepath = os.path.join(self.cache_dir, f"{entry.cache_id}.pkl")
+                filepath = os.path.join(self.cache_dir, f"{entry.cache_id}.pt")
                 self._io_writer.write(filepath, _extract_storage(obj))
                 self._save_cache_map[entry.cache_id] = True
             else:
@@ -146,7 +146,7 @@ class CacheManager:
                 return obj
             self._load_total += 1
             if obj.cache_id not in self._load_cache_map:
-                filepath = os.path.join(self.cache_dir, f"{obj.cache_id}.pkl")
+                filepath = os.path.join(self.cache_dir, f"{obj.cache_id}.pt")
                 self._load_cache_map[obj.cache_id] = self._io_writer.read(filepath)
             else:
                 self._load_hits += 1

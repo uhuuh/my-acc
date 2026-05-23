@@ -11,6 +11,8 @@ import traceback
 from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Any, List, Dict, Tuple, Optional
+import sys
+import linecache
 
 import torch
 
@@ -95,7 +97,7 @@ def _serialize_tensor(tensor, max_tensor_size_mb: int):
                 device="cpu",
                 pin_memory=True
             )
-            cpu_tensor.copy_(contiguous, non_blocking=True)
+            cpu_tensor.copy_(contiguous, non_blocking=False)
             return cpu_tensor
     except Exception as e:
         print(f"[DUMP WARN] Failed to make tensor contiguous: {e}, replacing with None")
@@ -175,28 +177,25 @@ class SerializationSession:
         if self._cache_manager is None:
             raise RuntimeError("Session not started")
 
-        stack = traceback.extract_stack()
         _acc_dir = os.path.dirname(os.path.abspath(__file__))
-        # Skip if the call stack only contains our own module frames,
-        # indicating an internal operation (e.g. backward pass).
-        has_external = any(
-            not f.filename.startswith(_acc_dir)
-            for f in stack
-        )
-        if not has_external:
-            return self.sequence
+
+        frames = []
+        f = sys._getframe(0)
+        while f:
+            frames.append(f)
+            f = f.f_back
 
         filepath, filename, function, lineno = "", "", "", 0
-        for frame_info in reversed(stack):
-            if not frame_info.filename.startswith(_acc_dir):
-                filepath = frame_info.filename
-                filename = os.path.basename(frame_info.filename)
-                function = frame_info.name
-                lineno = frame_info.lineno
+        for frame in frames:
+            if not frame.f_code.co_filename.startswith(_acc_dir):
+                filepath = frame.f_code.co_filename
+                filename = os.path.basename(filepath)
+                function = frame.f_code.co_name
+                lineno = frame.f_lineno
                 break
         call_stack = [
-            {'filepath': frame.filename, 'lineno': frame.lineno, 'line': frame.line}
-            for frame in stack
+            {'filepath': f.f_code.co_filename, 'lineno': f.f_lineno, 'line': linecache.getline(f.f_code.co_filename, f.f_lineno).rstrip('\n')}
+            for f in reversed(frames)
         ]
 
         filename_safe = _sanitize_filename(filename)
