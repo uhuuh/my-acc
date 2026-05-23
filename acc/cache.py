@@ -20,11 +20,11 @@ class CacheEntry:
     shape: List[int] # tensor/array shape
 
     @classmethod
-    def from_obj(cls, obj: Any) -> 'CacheEntry':
+    def from_obj(cls, obj: Any, mode: str = 'fast') -> 'CacheEntry':
         """从 tensor/numpy 创建 CacheEntry"""
         storage = _extract_storage(obj)
         return cls(
-            cache_id=_compute_hash(storage),
+            cache_id=_compute_hash(storage, mode),
             type='tensor' if isinstance(obj, torch.Tensor) else 'numpy',
             dtype=str(obj.dtype).replace('torch.', ''),
             shape=list(obj.shape)
@@ -53,20 +53,32 @@ def _extract_storage(obj: Any) -> torch.Tensor:
     return torch.from_numpy(obj).contiguous().cpu()
 
 
-def _compute_hash(storage: torch.Tensor) -> str:
-    """计算 tensor 存储块的 BLAKE2b 哈希"""
-    # BFloat16 不被 numpy 支持，转为 float32 计算 hash
-    if storage.dtype == torch.bfloat16:
-        storage = storage.float()
-    return hashlib.blake2b(storage.numpy().tobytes(), digest_size=32).hexdigest()
+def _compute_hash(storage: torch.Tensor, mode: str = 'fast') -> str:
+    """计算 cache_id
+
+    Args:
+        storage: tensor 存储块
+        mode: 'fast' 使用地址指针、块大小和版本号，'strict' 使用内容哈希
+
+    Returns:
+        cache_id 字符串
+    """
+    if mode == 'fast':
+        return f"ptr_{storage.data_ptr()}_{storage.numel()}_{storage._version}"
+    else:
+        # BFloat16 不被 numpy 支持，转为 float32 计算 hash
+        if storage.dtype == torch.bfloat16:
+            storage = storage.float()
+        return hashlib.blake2b(storage.numpy().tobytes(), digest_size=32).hexdigest()
 
 
 class CacheManager:
     """Content-addressable tensor/numpy cache."""
 
-    def __init__(self, cache_dir: str, io_writer: Optional[IOWriter] = None):
+    def __init__(self, cache_dir: str, io_writer: Optional[IOWriter] = None, mode: str = 'fast'):
         self.cache_dir = cache_dir
         self._io_writer = io_writer
+        self._mode = mode
         self._save_cache_map: Dict[str, bool] = {}  # cache_id -> 是否已写入
         self._load_cache_map: Dict[str, torch.Tensor] = {}  # cache_id -> 存储块
 
@@ -75,7 +87,7 @@ class CacheManager:
         def processor(obj: Any) -> Any:
             if not isinstance(obj, (torch.Tensor, np.ndarray)):
                 return obj
-            entry = CacheEntry.from_obj(obj)
+            entry = CacheEntry.from_obj(obj, self._mode)
             if entry.cache_id not in self._save_cache_map:
                 filepath = os.path.join(self.cache_dir, f"{entry.cache_id}.pkl")
                 self._io_writer.write(filepath, _extract_storage(obj))

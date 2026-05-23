@@ -158,10 +158,10 @@ def test_different_tensors_different_hash():
 
 
 def test_identical_tensors_same_hash():
-    print("Test: identical content yields same cache_id")
+    print("Test: identical content yields same cache_id (strict mode)")
     with tempfile.TemporaryDirectory() as tmpdir:
         io_writer = IOWriter(enable_async=False)
-        mgr = CacheManager(tmpdir, io_writer)
+        mgr = CacheManager(tmpdir, io_writer, mode='strict')
         t1 = torch.tensor([1.0, 2.0])
         t2 = torch.tensor([1.0, 2.0])
         e1 = mgr.save(t1)
