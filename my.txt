@@ -1,6 +1,0 @@
-/mnt/c/Users/uh/code/work/train-0116/nanoGPT/my/run.sh 跑这个脚本2分钟
-使用py-spy reocrd --pid xxx --full-filenames 导出火焰图
-分析火焰图，定位性能瓶颈和优化性能
-提示 to cpu可以使用pin_memory加速
-每次性能测试时，应该清空/mnt/c/Users/uh/code/work/train-0116/nanoGPT/dump，避免磁盘空间不够
-

@@ -176,10 +176,11 @@ class SerializationSession:
             raise RuntimeError("Session not started")
 
         stack = traceback.extract_stack()
+        _acc_dir = os.path.dirname(os.path.abspath(__file__))
         # Skip if the call stack only contains our own module frames,
         # indicating an internal operation (e.g. backward pass).
         has_external = any(
-            not f.filename.endswith(('serialization.py', 'dump.py'))
+            not f.filename.startswith(_acc_dir)
             for f in stack
         )
         if not has_external:
@@ -187,7 +188,7 @@ class SerializationSession:
 
         filepath, filename, function, lineno = "", "", "", 0
         for frame_info in reversed(stack):
-            if not (frame_info.filename.endswith('serialization.py') or frame_info.filename.endswith('dump.py')):
+            if not frame_info.filename.startswith(_acc_dir):
                 filepath = frame_info.filename
                 filename = os.path.basename(frame_info.filename)
                 function = frame_info.name
