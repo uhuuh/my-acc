@@ -170,16 +170,28 @@ class SerializationSession:
         print(f"[DUMP] Created session directory: {self.session_dir}")
         return self.session_dir
 
-    def save_operation(
-        self, func, filepath: str, filename: str, function: str,
-        lineno: int, args: tuple, kwargs: dict, outputs
-    ) -> int:
+    def save_operation(self, opname: str, args: tuple, kwargs: dict, outputs) -> int:
         """Save a single operator dump. Returns sequence number."""
         if self._cache_manager is None:
             raise RuntimeError("Session not started")
+
+        stack = traceback.extract_stack()
+        filepath, filename, function, lineno = "", "", "", 0
+        for frame_info in reversed(stack):
+            if not (frame_info.filename.endswith('serialization.py') or frame_info.filename.endswith('dump.py')):
+                filepath = frame_info.filename
+                filename = os.path.basename(frame_info.filename)
+                function = frame_info.name
+                lineno = frame_info.lineno
+                break
+        call_stack = [
+            {'filepath': frame.filename, 'lineno': frame.lineno, 'line': frame.line}
+            for frame in stack
+        ]
+
         filename_safe = _sanitize_filename(filename)
         function_safe = _sanitize_filename(function)
-        opname_safe = _sanitize_opname(str(func))
+        opname_safe = _sanitize_opname(opname)
         serialized_args = [
             _serialize_value(arg, self.max_tensor_size_mb, self._cache_manager)
             for arg in args
@@ -188,31 +200,26 @@ class SerializationSession:
         for key, val in (kwargs or {}).items():
             serialized_kwargs[key] = _serialize_value(val, self.max_tensor_size_mb, self._cache_manager)
         serialized_outputs = _serialize_outputs(outputs, self.max_tensor_size_mb, self._cache_manager)
-        stack = traceback.extract_stack()
-        call_stack = [
-            {'filepath': frame.filename, 'lineno': frame.lineno, 'line': frame.line}
-            for frame in stack
-        ]
         seq = self.sequence
         json_filename = f"{seq:06d}__{filename_safe}__{function_safe}__{opname_safe}.json"
         pkl_filename = f"{seq:06d}__{filename_safe}__{function_safe}__{opname_safe}.pkl"
         json_path = os.path.join(self.session_dir, json_filename)
         pkl_path = os.path.join(self.session_dir, pkl_filename)
         try:
-            self._io_writer.write(json_path, json.dumps({
+            self._io_writer.write(json_path, {
                 'sequence': seq, 'filepath': filepath, 'filename': filename,
-                'function': function, 'lineno': lineno, 'opname': str(func),
+                'function': function, 'lineno': lineno, 'opname': opname,
                 'call_stack': call_stack
-            }, indent=2))
+            })
             self._io_writer.write(pkl_path, {
                 'inputs': {'args': serialized_args, 'kwargs': serialized_kwargs},
                 'outputs': serialized_outputs,
             })
         except Exception as e:
-            print(f"[DUMP ERROR] {seq:06d} | {filename}:{lineno} | {func} | {e}")
+            print(f"[DUMP ERROR] {seq:06d} | {filename}:{lineno} | {opname} | {e}")
             self.sequence += 1
             return seq
-        print(f"[DUMP] {seq:06d} | {filename}:{lineno} | {func} | saved to {json_filename}")
+        print(f"[DUMP] {seq:06d} | {filename}:{lineno} | {opname} | saved to {json_filename}")
         self.sequence += 1
         return seq
 

@@ -43,18 +43,8 @@ def _install_impl_patch():
                     def __torch_dispatch__(self, func, types, args=(), kwargs=None):
                         result = func(*args, **(kwargs or {}))
                         if _active_session is not None:
-                            stack = traceback.extract_stack()
-                            filepath, filename, func_name, lineno = "", "", "", 0
-                            for frame_info in reversed(stack):
-                                if not frame_info.filename.endswith('dump.py'):
-                                    filepath = frame_info.filename
-                                    filename = os.path.basename(frame_info.filename)
-                                    func_name = frame_info.name
-                                    lineno = frame_info.lineno
-                                    break
                             _active_session.save_operation(
-                                func, filepath, filename, func_name, lineno,
-                                args, kwargs or {}, result
+                                str(func), args, kwargs or {}, result
                             )
                         return result
                 mode = NestedMode()
@@ -127,16 +117,7 @@ class ops_dump(TorchDispatchMode):
             return func(*args, **(kwargs or {}))
         kwargs = kwargs or {}
         result = func(*args, **kwargs)
-        stack = traceback.extract_stack()
-        filepath, filename, func_name, lineno = "", "", "", 0
-        for frame_info in reversed(stack):
-            if not frame_info.filename.endswith('dump.py'):
-                filepath = frame_info.filename
-                filename = os.path.basename(frame_info.filename)
-                func_name = frame_info.name
-                lineno = frame_info.lineno
-                break
-        self.session.save_operation(func, filepath, filename, func_name, lineno, args, kwargs, result)
+        self.session.save_operation(str(func), args, kwargs, result)
         return result
 
     def __call__(self, func):
