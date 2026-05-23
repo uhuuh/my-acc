@@ -8,7 +8,6 @@ Environment variable ACC_DUMP_ENABLED controls global dump behavior:
 """
 
 import os
-import traceback
 import torch
 from torch.utils._python_dispatch import TorchDispatchMode
 from .serialization import SerializationSession
@@ -37,29 +36,12 @@ def _install_impl_patch():
     print("[DUMP PATCH] Installing torch.library.impl patch")
 
     def patched_impl(qualname, types, func=None, *, lib=None):
-        def wrap(f):
-            def wrapped(*args, **kwargs):
-                class NestedMode(TorchDispatchMode):
-                    def __torch_dispatch__(self, func, types, args=(), kwargs=None):
-                        result = func(*args, **(kwargs or {}))
-                        if _active_session is not None:
-                            _active_session.save_operation(
-                                str(func), args, kwargs or {}, result
-                            )
-                        return result
-                mode = NestedMode()
-                mode.__enter__()
-                try:
-                    return f(*args, **kwargs)
-                finally:
-                    mode.__exit__(None, None, None)
-            return wrapped
         if func is None:
             def decorator(f):
-                return _original_impl(qualname, types, wrap(f), lib=lib)
+                return _original_impl(qualname, types, f, lib=lib)
             return decorator
         else:
-            return _original_impl(qualname, types, wrap(func), lib=lib)
+            return _original_impl(qualname, types, func, lib=lib)
 
     torch.library.impl = patched_impl
 
