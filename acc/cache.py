@@ -46,8 +46,11 @@ class CacheEntry:
 
 
 def _extract_storage(obj: Any) -> torch.Tensor:
-    """从 tensor/numpy 中提取存储块（tensor）"""
+    """从 tensor/numpy 中提取存储块（tensor），使用 pin_memory 加速"""
     if isinstance(obj, torch.Tensor):
+        # pin_memory=True 加速 GPU->CPU 传输
+        if obj.is_cuda:
+            return obj.detach().contiguous().cpu(pin_memory=True)
         return obj.detach().contiguous().cpu()
     # numpy 转 tensor
     return torch.from_numpy(obj).contiguous().cpu()
