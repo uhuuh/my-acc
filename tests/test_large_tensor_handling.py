@@ -21,11 +21,15 @@ def test_large_tensor_replaced_with_none():
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # Create ops_dump with small threshold (1MB for testing)
-        with ops_dump(tmpdir, max_tensor_size_mb=1) as dumper:
-            # Create a tensor larger than 1MB
-            # float32 = 4 bytes, so 256*256*256 = 16MB
-            large_tensor = torch.randn(256, 256, 256)
-            result = large_tensor + 1
+        os.environ['ACC_MAX_TENSOR_SIZE_MB'] = '1'
+        try:
+            with ops_dump(tmpdir) as dumper:
+                # Create a tensor larger than 1MB
+                # float32 = 4 bytes, so 256*256*256 = 16MB
+                large_tensor = torch.randn(256, 256, 256)
+                result = large_tensor + 1
+        finally:
+            os.environ.pop('ACC_MAX_TENSOR_SIZE_MB', None)
 
         # Get session directory
         dump_dirs = [d for d in os.listdir(tmpdir) if os.path.isdir(os.path.join(tmpdir, d))]
@@ -97,10 +101,14 @@ def test_contiguous_error_handling():
     print("=" * 60)
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        with ops_dump(tmpdir, max_tensor_size_mb=1) as dumper:
-            # Create a normal tensor (should work fine)
-            normal_tensor = torch.randn(10, 10)
-            result = normal_tensor + 1
+        os.environ['ACC_MAX_TENSOR_SIZE_MB'] = '1'
+        try:
+            with ops_dump(tmpdir) as dumper:
+                # Create a normal tensor (should work fine)
+                normal_tensor = torch.randn(10, 10)
+                result = normal_tensor + 1
+        finally:
+            os.environ.pop('ACC_MAX_TENSOR_SIZE_MB', None)
 
         # Get session directory
         dump_dirs = [d for d in os.listdir(tmpdir) if os.path.isdir(os.path.join(tmpdir, d))]

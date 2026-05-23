@@ -29,6 +29,7 @@
 - `comparators.py`: per-operator comparison logic
 
 ## Environment
+- `ACC_DUMP_PATH=<path>`: fallback when `ops_dump(dump_path=None)` is called (required if dump_path is None)
 - `ACC_DUMP_ENABLED=0` disables all dump capture globally
 - `my/` directory is gitignored — user-specific output/analysis files
 

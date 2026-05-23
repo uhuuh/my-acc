@@ -87,18 +87,7 @@ def _serialize_tensor(tensor, max_tensor_size_mb: int):
         print(f"[DUMP WARN] Tensor size {tensor_size_mb:.2f} MB exceeds limit {max_tensor_size_mb} MB, replacing with None")
         return None
     try:
-        contiguous = tensor.detach().contiguous()
-        if tensor.device.type == 'cpu':
-            return contiguous
-        else:
-            cpu_tensor = torch.empty(
-                contiguous.size(),
-                dtype=contiguous.dtype,
-                device="cpu",
-                pin_memory=True
-            )
-            cpu_tensor.copy_(contiguous, non_blocking=False)
-            return cpu_tensor
+        return tensor.detach().contiguous()
     except Exception as e:
         print(f"[DUMP WARN] Failed to make tensor contiguous: {e}, replacing with None")
         return None
@@ -136,11 +125,26 @@ def _serialize_outputs(result, max_tensor_size_mb: int, cache_mgr: CacheManager)
 class SerializationSession:
     """Manages a single serialization session, integrating CacheManager."""
 
-    def __init__(self, dump_path: str, max_tensor_size_mb: int = 10240, enable_async_io: Optional[bool] = None):
+    def __init__(self, dump_path: str = None, max_tensor_size_mb: int = None, enable_async_io: Optional[bool] = None):
+        env_path = os.environ.get('ACC_DUMP_PATH')
+        if dump_path is not None and env_path is not None:
+            raise ValueError(
+                f"ACC_DUMP_PATH env var is set ({env_path!r}) but dump_path was also provided "
+                f"({dump_path!r}). Use one or the other, not both."
+            )
+        if dump_path is None:
+            dump_path = env_path
+            if dump_path is None:
+                raise ValueError("dump_path is None and ACC_DUMP_PATH env var is not set")
         self.dump_path = dump_path
         self.session_dir: Optional[str] = None
         self.sequence: int = 0
+        if max_tensor_size_mb is None:
+            max_tensor_size_mb = int(os.environ.get('ACC_MAX_TENSOR_SIZE_MB', '10240'))
         self.max_tensor_size_mb: int = max_tensor_size_mb
+        if enable_async_io is None:
+            enable_async_io_env = os.environ.get('ACC_ENABLE_ASYNC_IO', '')
+            enable_async_io = enable_async_io_env.lower() not in ('0', 'false', 'no', 'off') if enable_async_io_env else None
         self._enable_async_io: Optional[bool] = enable_async_io
         self._cache_manager: Optional[CacheManager] = None
         self._io_writer: Optional[IOWriter] = None
