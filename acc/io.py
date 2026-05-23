@@ -4,6 +4,7 @@ Provides async file writing to avoid blocking main thread.
 """
 
 import asyncio
+import json
 import os
 import pickle
 import time
@@ -53,18 +54,20 @@ class IOWriter:
             self._write_sync(file_path, content)
 
     def _write_sync(self, file_path: str, content):
-        """Synchronous write."""
+        """Synchronous write. Supports .json and .pkl extensions."""
         parent_dir = os.path.dirname(file_path)
         if parent_dir:
             os.makedirs(parent_dir, exist_ok=True)
-        if isinstance(content, str):
+        ext = os.path.splitext(file_path)[1]
+        if ext == '.json':
             with open(file_path, 'w') as f:
-                f.write(content)
-        else:
-            # 统计写入字节
-            self._bytes_written += len(pickle.dumps(content))
+                json.dump(content, f, indent=2)
+        elif ext == '.pkl':
             with open(file_path, 'wb') as f:
                 pickle.dump(content, f)
+        else:
+            raise ValueError(f"Unsupported file extension '{ext}' for {file_path}. Only .json and .pkl are supported.")
+        self._bytes_written += os.path.getsize(file_path)
 
     async def _write_async(self, file_path: str, content):
         """Async write task."""

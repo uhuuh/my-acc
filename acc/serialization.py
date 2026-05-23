@@ -85,14 +85,18 @@ def _serialize_tensor(tensor, max_tensor_size_mb: int):
         print(f"[DUMP WARN] Tensor size {tensor_size_mb:.2f} MB exceeds limit {max_tensor_size_mb} MB, replacing with None")
         return None
     try:
+        contiguous = tensor.detach().contiguous()
         if tensor.device.type == 'cpu':
-            return tensor.detach().contiguous()
-        # 尝试 pin_memory 加速，如果不支持则回退
-        try:
-            return tensor.detach().contiguous().cpu(pin_memory=True)
-        except TypeError:
-            # pin_memory 参数不支持，使用普通 cpu()
-            return tensor.detach().contiguous().cpu()
+            return contiguous
+        else:
+            cpu_tensor = torch.empty(
+                contiguous.size(),
+                dtype=contiguous.dtype,
+                device="cpu",
+                pin_memory=True
+            )
+            cpu_tensor.copy_(contiguous, non_blocking=True)
+            return cpu_tensor
     except Exception as e:
         print(f"[DUMP WARN] Failed to make tensor contiguous: {e}, replacing with None")
         return None

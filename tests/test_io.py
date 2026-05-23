@@ -1,4 +1,5 @@
 # tests/test_io.py
+import json
 import tempfile
 import os
 import pickle
@@ -27,12 +28,12 @@ def test_iowriter_constructor_sync_mode():
 
 
 def test_iowriter_async_write_str():
-    """Test async write for text (str) file"""
+    """Test async write for JSON file"""
     writer = IOWriter(enable_async=True)
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        file_path = os.path.join(tmpdir, "test.txt")
-        content = "hello world"
+        file_path = os.path.join(tmpdir, "test.json")
+        content = {"msg": "hello world"}
 
         writer.write(file_path, content)
         writer.wait_complete()
@@ -40,7 +41,7 @@ def test_iowriter_async_write_str():
         # Verify file exists and content is correct
         assert os.path.exists(file_path)
         with open(file_path, 'r') as f:
-            data = f.read()
+            data = json.load(f)
         assert data == content
 
 
@@ -63,19 +64,19 @@ def test_iowriter_async_write_obj():
 
 
 def test_iowriter_sync_write_str():
-    """Test sync write for text (str) file"""
+    """Test sync write for JSON file"""
     writer = IOWriter(enable_async=False)
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        file_path = os.path.join(tmpdir, "test.txt")
-        content = "hello sync"
+        file_path = os.path.join(tmpdir, "test.json")
+        content = {"msg": "hello sync"}
 
         writer.write(file_path, content)
 
         # No need to wait - sync write completes immediately
         assert os.path.exists(file_path)
         with open(file_path, 'r') as f:
-            data = f.read()
+            data = json.load(f)
         assert data == content
 
     writer.wait_complete()
@@ -105,8 +106,8 @@ def test_iowriter_pending_files_tracking():
     writer = IOWriter(enable_async=True)
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        file_path = os.path.join(tmpdir, "test.txt")
-        content = "hello"
+        file_path = os.path.join(tmpdir, "test.json")
+        content = {"msg": "hello"}
 
         # Before write: pending set should be empty
         assert len(writer._pending_files) == 0
@@ -146,15 +147,15 @@ def test_iowriter_concurrent_writes():
 
 
 def test_iowriter_read_text():
-    """Test read for text file"""
+    """Test read for JSON file"""
     writer = IOWriter(enable_async=False)
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        file_path = os.path.join(tmpdir, "test.txt")
-        content = "hello read"
+        file_path = os.path.join(tmpdir, "test.json")
+        content = {"msg": "hello read"}
 
         writer.write(file_path, content)
-        data = writer.read(file_path)
+        data = json.loads(writer.read(file_path))
         assert data == content
 
 
