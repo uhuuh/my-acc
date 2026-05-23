@@ -13,7 +13,6 @@ from .formatting import (
     format_signature,
     format_display_key,
     format_dump_filename,
-    format_comparison_result,
     format_eta,
 )
 from .comparators import (
@@ -75,8 +74,7 @@ def _compare_lists(list_a: List, list_b: List, label: str):
         else:
             comparator = create_comparator(list_a[i], list_b[i])
         left_info, right_info = comparator.get_type_info()
-        result = comparator.compare()
-        log = format_comparison_result(result)
+        log = comparator.compare()
         print(f"  {label}[{i}] | {left_info} | {right_info} | {log}")
 
 
@@ -92,8 +90,7 @@ def _compare_kwargs(kwargs_a: dict, kwargs_b: dict, label: str):
         else:
             comparator = create_comparator(kwargs_a[key], kwargs_b[key])
         left_info, right_info = comparator.get_type_info()
-        result = comparator.compare()
-        log = format_comparison_result(result)
+        log = comparator.compare()
         print(f"  {key_label} | {left_info} | {right_info} | {log}")
 
 

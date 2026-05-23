@@ -6,8 +6,7 @@ Provides ElementComparator classes for comparing different types.
 
 import torch
 import numpy as np
-from typing import Any, Tuple, Dict
-from .formatting import format_type_info, format_comparison_result
+from typing import Any, Tuple
 
 
 class ElementComparator:
@@ -22,8 +21,8 @@ class ElementComparator:
         """Return type info for left and right elements."""
         raise NotImplementedError
 
-    def compare(self) -> Dict:
-        """Return comparison result (no log string)."""
+    def compare(self) -> str:
+        """Return comparison result as formatted log string."""
         raise NotImplementedError
 
 
@@ -33,11 +32,9 @@ class NoneComparator(ElementComparator):
     def get_type_info(self) -> Tuple[str, str]:
         return "None", "None"
 
-    def compare(self) -> Dict:
+    def compare(self) -> str:
         exact_match = self.a is None and self.b is None
-        return {
-            'exact_match': exact_match
-        }
+        return f"exact_match={exact_match}"
 
 
 class IntComparator(ElementComparator):
@@ -46,13 +43,12 @@ class IntComparator(ElementComparator):
     def get_type_info(self) -> Tuple[str, str]:
         return f"int({self.a})", f"int({self.b})"
 
-    def compare(self) -> Dict:
+    def compare(self) -> str:
         exact_match = self.a == self.b
         diff = abs(self.a - self.b) if not exact_match else 0
-        return {
-            'exact_match': exact_match,
-            'diff': diff
-        }
+        if isinstance(diff, float):
+            return f"exact_match={exact_match}, diff={diff:.6e}"
+        return f"exact_match={exact_match}, diff={diff}"
 
 
 class FloatComparator(ElementComparator):
@@ -61,15 +57,10 @@ class FloatComparator(ElementComparator):
     def get_type_info(self) -> Tuple[str, str]:
         return f"float({self.a})", f"float({self.b})"
 
-    def compare(self) -> Dict:
+    def compare(self) -> str:
         exact_match = self.a == self.b
         diff = abs(self.a - self.b) if not exact_match else 0.0
-        precision_diff = not exact_match
-        return {
-            'exact_match': exact_match,
-            'precision_diff': precision_diff,
-            'diff': diff
-        }
+        return f"exact_match={exact_match}, diff={diff:.6e}"
 
 
 class TensorComparator(ElementComparator):
@@ -93,12 +84,9 @@ class TensorComparator(ElementComparator):
         desc_b = f"tensor(dtype={dtype_b}, shape={shape_b}, nan={b_nan}, inf={b_inf}, neg_inf={b_neg_inf})"
         return desc_a, desc_b
 
-    def compare(self) -> Dict:
+    def compare(self) -> str:
         a = torch.from_numpy(self.a) if isinstance(self.a, np.ndarray) else self.a
         b = torch.from_numpy(self.b) if isinstance(self.b, np.ndarray) else self.b
-
-        dtype_a_original = a.dtype
-        dtype_b_original = b.dtype
 
         dtype_match = a.dtype == b.dtype
         shape_match = a.shape == b.shape
@@ -108,29 +96,18 @@ class TensorComparator(ElementComparator):
         if b.ndim == 0:
             b = b.unsqueeze(0)
 
+        dtype_status = 'match' if dtype_match else 'mismatch'
+        shape_status = 'match' if shape_match else 'mismatch'
+
         if not shape_match:
-            return {
-                'dtype_match': dtype_match,
-                'shape_match': False,
-                'dtype_original_a': str(dtype_a_original),
-                'dtype_original_b': str(dtype_b_original),
-                'content_skipped': True
-            }
+            return f"dtype={dtype_status}, shape={shape_status}, content_skipped"
 
         a_float = a.float()
         b_float = b.float()
 
-        # Handle empty tensors - skip content comparison
         total_count = a_float.numel()
         if total_count == 0:
-            return {
-                'dtype_match': dtype_match,
-                'shape_match': shape_match,
-                'dtype_original_a': str(dtype_a_original),
-                'dtype_original_b': str(dtype_b_original),
-                'exact_match': True,
-                'empty_tensor': True
-            }
+            return f"dtype={dtype_status}, shape={shape_status}, empty_tensor_no_content"
 
         exact_match = torch.allclose(a_float, b_float, rtol=0, atol=0)
         match_count = (a_float == b_float).sum().item()
@@ -149,22 +126,14 @@ class TensorComparator(ElementComparator):
         else:
             cosine = 1.0
 
-        precision_diff = not exact_match
-
-        return {
-            'dtype_match': dtype_match,
-            'shape_match': shape_match,
-            'dtype_original_a': str(dtype_a_original),
-            'dtype_original_b': str(dtype_b_original),
-            'exact_match': exact_match,
-            'precision_diff': precision_diff,
-            'match_ratio': match_ratio,
-            'max_err': max_err,
-            'min_err': min_err,
-            'mean_err': mean_err,
-            'mse': mse,
-            'cosine': cosine
-        }
+        parts = [f"dtype={dtype_status}, shape={shape_status}", f"exact_match={exact_match}"]
+        parts.append(f"match_ratio={match_ratio:.4f}")
+        parts.append(f"max_err={max_err:.6e}")
+        parts.append(f"min_err={min_err:.6e}")
+        parts.append(f"mean_err={mean_err:.6e}")
+        parts.append(f"mse={mse:.6e}")
+        parts.append(f"cosine={cosine:.6f}")
+        return ', '.join(parts)
 
 
 class NumpyComparator(TensorComparator):
@@ -196,17 +165,12 @@ class UnsupportedComparator(ElementComparator):
     def get_type_info(self) -> Tuple[str, str]:
         return str(self.a), str(self.b)
 
-    def compare(self) -> Dict:
+    def compare(self) -> str:
         try:
             exact_match = self.a == self.b
         except Exception:
             exact_match = False
-
-        return {
-            'exact_match': exact_match,
-            'str_a': str(self.a),
-            'str_b': str(self.b)
-        }
+        return f"exact_match={exact_match}"
 
 
 class MissingInAComparator(ElementComparator):
@@ -217,12 +181,10 @@ class MissingInAComparator(ElementComparator):
         self.b = b
 
     def get_type_info(self) -> Tuple[str, str]:
-        return "<missing>", format_type_info(self.b)
+        return "<missing>", type(self.b).__name__
 
-    def compare(self) -> Dict:
-        return {
-            'missing_in_A': True
-        }
+    def compare(self) -> str:
+        return "missing_in_A"
 
 
 class MissingInBComparator(ElementComparator):
@@ -233,12 +195,10 @@ class MissingInBComparator(ElementComparator):
         self.a = a
 
     def get_type_info(self) -> Tuple[str, str]:
-        return format_type_info(self.a), "<missing>"
+        return type(self.a).__name__, "<missing>"
 
-    def compare(self) -> Dict:
-        return {
-            'missing_in_B': True
-        }
+    def compare(self) -> str:
+        return "missing_in_B"
 
 
 def create_comparator(a: Any, b: Any) -> ElementComparator:
