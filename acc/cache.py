@@ -2,6 +2,7 @@
 
 import hashlib
 import os
+import time
 from dataclasses import dataclass
 from typing import Any, List, Dict, Callable, Optional
 
@@ -75,23 +76,66 @@ def _compute_hash(storage: torch.Tensor, mode: str = 'fast') -> str:
 class CacheManager:
     """Content-addressable tensor/numpy cache."""
 
-    def __init__(self, cache_dir: str, io_writer: Optional[IOWriter] = None, mode: str = 'fast'):
+    def __init__(self, cache_dir: str, io_writer: Optional[IOWriter] = None, mode: str = 'fast', monitor_interval: float = 5.0):
         self.cache_dir = cache_dir
         self._io_writer = io_writer
         self._mode = mode
+        self._monitor_interval = monitor_interval
         self._save_cache_map: Dict[str, bool] = {}  # cache_id -> 是否已写入
         self._load_cache_map: Dict[str, torch.Tensor] = {}  # cache_id -> 存储块
+        # 监控统计
+        self._save_total = 0      # save 总请求数
+        self._save_hits = 0       # save 命中数（已存在 cache_id）
+        self._load_total = 0      # load 总请求数
+        self._load_hits = 0       # load 命中数（已存在内存缓存）
+        self._last_monitor_time = time.time()
+        # 历史累计
+        self._save_total_history = 0
+        self._save_hits_history = 0
+        self._load_total_history = 0
+        self._load_hits_history = 0
+
+    def _check_monitor(self):
+        """检查并打印监控日志"""
+        now = time.time()
+        elapsed = now - self._last_monitor_time
+        if elapsed >= self._monitor_interval:
+            # 当前时段统计
+            save_rate = self._save_hits / self._save_total if self._save_total > 0 else 0
+            load_rate = self._load_hits / self._load_total if self._load_total > 0 else 0
+            # 历史累计统计
+            save_rate_history = self._save_hits_history / self._save_total_history if self._save_total_history > 0 else 0
+            load_rate_history = self._load_hits_history / self._load_total_history if self._load_total_history > 0 else 0
+            print(f"[CACHE MONITOR] Save: {self._save_hits}/{self._save_total} ({save_rate:.1%}) | "
+                  f"History: {self._save_hits_history}/{self._save_total_history} ({save_rate_history:.1%})")
+            print(f"[CACHE MONITOR] Load: {self._load_hits}/{self._load_total} ({load_rate:.1%}) | "
+                  f"History: {self._load_hits_history}/{self._load_total_history} ({load_rate_history:.1%})")
+            # 累加到历史
+            self._save_total_history += self._save_total
+            self._save_hits_history += self._save_hits
+            self._load_total_history += self._load_total
+            self._load_hits_history += self._load_hits
+            # 重置当前时段
+            self._save_total = 0
+            self._save_hits = 0
+            self._load_total = 0
+            self._load_hits = 0
+            self._last_monitor_time = now
 
     def save(self, data: Any) -> Any:
         """遍历 data，将 tensor/numpy 替换为 CacheEntry，首次写入文件"""
         def processor(obj: Any) -> Any:
             if not isinstance(obj, (torch.Tensor, np.ndarray)):
                 return obj
+            self._save_total += 1
             entry = CacheEntry.from_obj(obj, self._mode)
             if entry.cache_id not in self._save_cache_map:
                 filepath = os.path.join(self.cache_dir, f"{entry.cache_id}.pkl")
                 self._io_writer.write(filepath, _extract_storage(obj))
                 self._save_cache_map[entry.cache_id] = True
+            else:
+                self._save_hits += 1
+            self._check_monitor()
             return entry
         return self._traverse(data, processor)
 
@@ -100,9 +144,13 @@ class CacheManager:
         def processor(obj: Any) -> Any:
             if not isinstance(obj, CacheEntry):
                 return obj
+            self._load_total += 1
             if obj.cache_id not in self._load_cache_map:
                 filepath = os.path.join(self.cache_dir, f"{obj.cache_id}.pkl")
                 self._load_cache_map[obj.cache_id] = self._io_writer.read(filepath)
+            else:
+                self._load_hits += 1
+            self._check_monitor()
             return obj.to_obj(self._load_cache_map[obj.cache_id])
         return self._traverse(data, processor)
 
