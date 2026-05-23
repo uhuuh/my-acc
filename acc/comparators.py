@@ -140,7 +140,6 @@ class NumpyComparator(TensorComparator):
     """Compare two numpy arrays (uses TensorComparator logic)."""
 
     def get_type_info(self) -> Tuple[str, str]:
-        import numpy as np
         dtype_a = str(self.a.dtype)
         shape_a = list(self.a.shape)
         dtype_b = str(self.b.dtype)

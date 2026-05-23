@@ -95,6 +95,33 @@ def test_load_tensor():
     print("  PASS")
 
 
+def test_load_numpy():
+    print("Test: load numpy from CacheEntry")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        io_writer = IOWriter(enable_async=False)
+        mgr = CacheManager(tmpdir, io_writer)
+        a = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+        entry = mgr.save(a)
+        restored = mgr.load(entry)
+        assert isinstance(restored, np.ndarray)
+        assert np.equal(restored, a).all()
+    print("  PASS")
+
+
+def test_bfloat16_tensor():
+    print("Test: BFloat16 tensor save/load")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        io_writer = IOWriter(enable_async=False)
+        mgr = CacheManager(tmpdir, io_writer)
+        t = torch.tensor([1.0, 2.0, 3.0], dtype=torch.bfloat16)
+        entry = mgr.save(t)
+        restored = mgr.load(entry)
+        assert isinstance(restored, torch.Tensor)
+        assert restored.dtype == torch.bfloat16
+        assert torch.equal(restored, t)
+    print("  PASS")
+
+
 def test_save_load_nested():
     print("Test: save/load nested structure")
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -173,6 +200,8 @@ def main():
     test_save_numpy()
     test_save_scalar()
     test_load_tensor()
+    test_load_numpy()
+    test_bfloat16_tensor()
     test_save_load_nested()
     test_different_tensors_different_hash()
     test_identical_tensors_same_hash()

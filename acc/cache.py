@@ -30,29 +30,35 @@ class CacheEntry:
             shape=list(obj.shape)
         )
 
-    def to_obj(self, storage: np.ndarray) -> Any:
-        """从存储块重建 tensor/numpy"""
+    def to_obj(self, storage: torch.Tensor) -> Any:
+        """从 tensor 存储块重建 tensor/numpy"""
         if self.type == 'tensor':
-            t = torch.from_numpy(storage)
+            t = storage
             if list(t.shape) != self.shape:
                 t = t.reshape(self.shape)
             return t
         else:
-            if list(storage.shape) != self.shape:
-                storage = storage.reshape(self.shape)
-            return storage
+            # numpy 类型
+            arr = storage.numpy()
+            if list(arr.shape) != self.shape:
+                arr = arr.reshape(self.shape)
+            return arr
 
 
-def _extract_storage(obj: Any) -> np.ndarray:
-    """从 tensor/numpy 中提取存储块（numpy array）"""
+def _extract_storage(obj: Any) -> torch.Tensor:
+    """从 tensor/numpy 中提取存储块（tensor）"""
     if isinstance(obj, torch.Tensor):
-        return obj.detach().contiguous().cpu().numpy()
-    return obj
+        return obj.detach().contiguous().cpu()
+    # numpy 转 tensor
+    return torch.from_numpy(obj).contiguous().cpu()
 
 
-def _compute_hash(storage: np.ndarray) -> str:
-    """计算存储块的 BLAKE2b 哈希"""
-    return hashlib.blake2b(storage.tobytes(), digest_size=32).hexdigest()
+def _compute_hash(storage: torch.Tensor) -> str:
+    """计算 tensor 存储块的 BLAKE2b 哈希"""
+    # BFloat16 不被 numpy 支持，转为 float32 计算 hash
+    if storage.dtype == torch.bfloat16:
+        storage = storage.float()
+    return hashlib.blake2b(storage.numpy().tobytes(), digest_size=32).hexdigest()
 
 
 class CacheManager:
@@ -62,7 +68,7 @@ class CacheManager:
         self.cache_dir = cache_dir
         self._io_writer = io_writer
         self._save_cache_map: Dict[str, bool] = {}  # cache_id -> 是否已写入
-        self._load_cache_map: Dict[str, np.ndarray] = {}  # cache_id -> 存储块
+        self._load_cache_map: Dict[str, torch.Tensor] = {}  # cache_id -> 存储块
 
     def save(self, data: Any) -> Any:
         """遍历 data，将 tensor/numpy 替换为 CacheEntry，首次写入文件"""
