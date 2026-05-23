@@ -9,7 +9,6 @@ import pickle
 import time
 from typing import Set, Optional
 import threading
-import torch
 
 
 class IOWriter:
@@ -61,11 +60,9 @@ class IOWriter:
         if isinstance(content, str):
             with open(file_path, 'w') as f:
                 f.write(content)
-        elif isinstance(content, torch.Tensor):
-            # 使用 torch.save 对 tensor 更高效
-            torch.save(content, file_path)
-            self._bytes_written += content.element_size() * content.numel()
         else:
+            # 统计写入字节
+            self._bytes_written += len(pickle.dumps(content))
             with open(file_path, 'wb') as f:
                 pickle.dump(content, f)
 
@@ -102,14 +99,10 @@ class IOWriter:
         return f"{value:,.2f} {units[unit_idx]}"
 
     def read(self, file_path: str):
-        """Read file. Returns str for text, tensor or object for pickle."""
+        """Read file. Returns str for text, object for pickle."""
         try:
             with open(file_path, 'r') as f:
                 return f.read()
         except UnicodeDecodeError:
-            # 先尝试 torch.load（对 tensor 文件更高效）
-            try:
-                return torch.load(file_path, weights_only=True)
-            except Exception:
-                with open(file_path, 'rb') as f:
-                    return pickle.load(f)
+            with open(file_path, 'rb') as f:
+                return pickle.load(f)
