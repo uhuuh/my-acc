@@ -7,6 +7,7 @@ import torch
 import numpy as np
 from acc.cache import CacheEntry, CacheManager
 from acc.io import IOWriter
+from acc.memory import PinMemoryAllocator
 
 
 def test_cache_entry():
@@ -21,8 +22,16 @@ def test_cache_entry():
 def test_save_tensor():
     print("Test: save with tensor")
     with tempfile.TemporaryDirectory() as tmpdir:
-        io_writer = IOWriter(name="cache", enable_async=False)
-        mgr = CacheManager(tmpdir, cache_io=io_writer)
+        cache_dir = os.path.join(tmpdir, "cache")
+        os.makedirs(cache_dir)
+        mgr = CacheManager()
+        mgr.cache_dir = cache_dir
+        mgr._io = IOWriter(enable_async=False)
+        mgr._started = True
+        mgr._pool = PinMemoryAllocator.create("advanced")
+        mgr._max_tensor_size_mb = 10240
+        mgr._save_cached = set()
+        mgr._load_cached = {}
         t = torch.randn(2, 3)
         result = mgr.save(t)
         assert isinstance(result, CacheEntry)
@@ -37,8 +46,16 @@ def test_save_tensor():
 def test_save_numpy():
     print("Test: save with numpy")
     with tempfile.TemporaryDirectory() as tmpdir:
-        io_writer = IOWriter(name="cache", enable_async=False)
-        mgr = CacheManager(tmpdir, cache_io=io_writer)
+        cache_dir = os.path.join(tmpdir, "cache")
+        os.makedirs(cache_dir)
+        mgr = CacheManager()
+        mgr.cache_dir = cache_dir
+        mgr._io = IOWriter(enable_async=False)
+        mgr._started = True
+        mgr._pool = PinMemoryAllocator.create("advanced")
+        mgr._max_tensor_size_mb = 10240
+        mgr._save_cached = set()
+        mgr._load_cached = {}
         a = np.random.randn(3, 4).astype(np.float32)
         result = mgr.save(a)
         assert isinstance(result, CacheEntry)
@@ -51,8 +68,16 @@ def test_save_numpy():
 def test_save_scalar():
     print("Test: save with non-tensor/numpy")
     with tempfile.TemporaryDirectory() as tmpdir:
-        io_writer = IOWriter(name="cache", enable_async=False)
-        mgr = CacheManager(tmpdir, cache_io=io_writer)
+        cache_dir = os.path.join(tmpdir, "cache")
+        os.makedirs(cache_dir)
+        mgr = CacheManager()
+        mgr.cache_dir = cache_dir
+        mgr._io = IOWriter(enable_async=False)
+        mgr._started = True
+        mgr._pool = PinMemoryAllocator.create("advanced")
+        mgr._max_tensor_size_mb = 10240
+        mgr._save_cached = set()
+        mgr._load_cached = {}
         assert mgr.save(42) == 42
         assert mgr.save(3.14) == 3.14
         assert mgr.save("hello") == "hello"
@@ -63,8 +88,16 @@ def test_save_scalar():
 def test_load_tensor():
     print("Test: load tensor from CacheEntry")
     with tempfile.TemporaryDirectory() as tmpdir:
-        io_writer = IOWriter(name="cache", enable_async=False)
-        mgr = CacheManager(tmpdir, cache_io=io_writer)
+        cache_dir = os.path.join(tmpdir, "cache")
+        os.makedirs(cache_dir)
+        mgr = CacheManager()
+        mgr.cache_dir = cache_dir
+        mgr._io = IOWriter(enable_async=False)
+        mgr._started = True
+        mgr._pool = PinMemoryAllocator.create("advanced")
+        mgr._max_tensor_size_mb = 10240
+        mgr._save_cached = set()
+        mgr._load_cached = {}
         t = torch.tensor([1.0, 2.0, 3.0])
         entry = mgr.save(t)
         restored = mgr.load(entry)
@@ -76,8 +109,16 @@ def test_load_tensor():
 def test_load_numpy():
     print("Test: load numpy from CacheEntry")
     with tempfile.TemporaryDirectory() as tmpdir:
-        io_writer = IOWriter(name="cache", enable_async=False)
-        mgr = CacheManager(tmpdir, cache_io=io_writer)
+        cache_dir = os.path.join(tmpdir, "cache")
+        os.makedirs(cache_dir)
+        mgr = CacheManager()
+        mgr.cache_dir = cache_dir
+        mgr._io = IOWriter(enable_async=False)
+        mgr._started = True
+        mgr._pool = PinMemoryAllocator.create("advanced")
+        mgr._max_tensor_size_mb = 10240
+        mgr._save_cached = set()
+        mgr._load_cached = {}
         a = np.array([1.0, 2.0, 3.0], dtype=np.float32)
         entry = mgr.save(a)
         restored = mgr.load(entry)
@@ -89,8 +130,16 @@ def test_load_numpy():
 def test_bfloat16_tensor():
     print("Test: BFloat16 tensor save/load")
     with tempfile.TemporaryDirectory() as tmpdir:
-        io_writer = IOWriter(name="cache", enable_async=False)
-        mgr = CacheManager(tmpdir, cache_io=io_writer)
+        cache_dir = os.path.join(tmpdir, "cache")
+        os.makedirs(cache_dir)
+        mgr = CacheManager()
+        mgr.cache_dir = cache_dir
+        mgr._io = IOWriter(enable_async=False)
+        mgr._started = True
+        mgr._pool = PinMemoryAllocator.create("advanced")
+        mgr._max_tensor_size_mb = 10240
+        mgr._save_cached = set()
+        mgr._load_cached = {}
         t = torch.tensor([1.0, 2.0, 3.0], dtype=torch.bfloat16)
         entry = mgr.save(t)
         restored = mgr.load(entry)
@@ -103,8 +152,16 @@ def test_bfloat16_tensor():
 def test_save_load_nested():
     print("Test: save/load nested structure")
     with tempfile.TemporaryDirectory() as tmpdir:
-        io_writer = IOWriter(name="cache", enable_async=False)
-        mgr = CacheManager(tmpdir, cache_io=io_writer)
+        cache_dir = os.path.join(tmpdir, "cache")
+        os.makedirs(cache_dir)
+        mgr = CacheManager()
+        mgr.cache_dir = cache_dir
+        mgr._io = IOWriter(enable_async=False)
+        mgr._started = True
+        mgr._pool = PinMemoryAllocator.create("advanced")
+        mgr._max_tensor_size_mb = 10240
+        mgr._save_cached = set()
+        mgr._load_cached = {}
         t1 = torch.randn(2, 2)
         t2 = torch.randn(3, 3)
         data = {'tensors': [t1, t2], 'value': 42, 'name': 'test'}
@@ -125,8 +182,16 @@ def test_save_load_nested():
 def test_different_tensors_different_hash():
     print("Test: different tensors get different cache_ids")
     with tempfile.TemporaryDirectory() as tmpdir:
-        io_writer = IOWriter(name="cache", enable_async=False)
-        mgr = CacheManager(tmpdir, cache_io=io_writer)
+        cache_dir = os.path.join(tmpdir, "cache")
+        os.makedirs(cache_dir)
+        mgr = CacheManager()
+        mgr.cache_dir = cache_dir
+        mgr._io = IOWriter(enable_async=False)
+        mgr._started = True
+        mgr._pool = PinMemoryAllocator.create("advanced")
+        mgr._max_tensor_size_mb = 10240
+        mgr._save_cached = set()
+        mgr._load_cached = {}
         t1 = torch.ones(2, 3)
         t2 = torch.zeros(2, 3)
         e1 = mgr.save(t1)
@@ -138,8 +203,16 @@ def test_different_tensors_different_hash():
 def test_same_storage_different_shape():
     print("Test: same storage but different shape")
     with tempfile.TemporaryDirectory() as tmpdir:
-        io_writer = IOWriter(name="cache", enable_async=False)
-        mgr = CacheManager(tmpdir, cache_io=io_writer)
+        cache_dir = os.path.join(tmpdir, "cache")
+        os.makedirs(cache_dir)
+        mgr = CacheManager()
+        mgr.cache_dir = cache_dir
+        mgr._io = IOWriter(enable_async=False)
+        mgr._started = True
+        mgr._pool = PinMemoryAllocator.create("advanced")
+        mgr._max_tensor_size_mb = 10240
+        mgr._save_cached = set()
+        mgr._load_cached = {}
         t1 = torch.arange(6)  # shape [6]
         t2 = t1.reshape(2, 3)  # shape [2, 3], same storage
         e1 = mgr.save(t1)

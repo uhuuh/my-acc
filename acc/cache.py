@@ -1,6 +1,7 @@
 """Content-addressable cache for tensor/numpy deduplication."""
 
 import os
+import time as _time_module
 from dataclasses import dataclass
 from typing import Any, List, Set, Optional, Dict
 
@@ -27,29 +28,66 @@ def _tensor_size_mb(obj) -> float:
 
 
 class CacheManager:
-    """Tracks cache IDs, transforms tensors to CacheEntry tokens, resolves back.
-
-    Owns PinMemoryPool and cache IOWriter for .pt storage writes.
-    """
-
-    def __init__(self, cache_dir: str, cache_io: IOWriter, allocator_type: str = "advanced",
-                 max_tensor_size_mb: Optional[int] = None):
-        self.cache_dir = cache_dir
-        self._io = cache_io
+    def __init__(self):
+        self.cache_dir = None
+        self._io = None
         self._save_cached: Set[str] = set()
         self._load_cached: Dict[str, torch.Tensor] = {}
-        self._pool: PinMemoryAllocator = PinMemoryAllocator.create(allocator_type)
-        self._max_tensor_size_mb = max_tensor_size_mb
+        self._pool = None
+        self._max_tensor_size_mb = None
+        self._bytes_this_interval = 0
+        self._bytes_total = 0
+        self._last_monitor_time = 0.0
+        self._started = False
 
-    def save(self, data: Any) -> Any:
-        """Traverse data, replace tensors/numpy with CacheEntry, write .pt on first encounter."""
-        def processor(obj: Any) -> Any:
+    def start(self, session_dir):
+        from .config import config
+        self._started = True
+        self.cache_dir = os.path.join(session_dir, 'cache')
+        os.makedirs(self.cache_dir, exist_ok=False)
+        self._io = IOWriter(name="cache")
+        self._io.start()
+        self._pool = PinMemoryAllocator.create("advanced")
+        self._max_tensor_size_mb = config.max_tensor_size_mb
+        self._save_cached = set()
+        self._load_cached = {}
+        self._bytes_this_interval = 0
+        self._bytes_total = 0
+        self._last_monitor_time = _time_module.time()
+
+    def stop(self):
+        if self._io is not None:
+            self._io.stop()
+        self._started = False
+
+    def _check_monitor(self):
+        from .config import config
+        now = _time_module.time()
+        elapsed = now - self._last_monitor_time
+        if elapsed >= config.cache_monitor_interval:
+            print(f"[CACHE MONITOR] Added: {self._format_bytes(self._bytes_this_interval)} | Total: {self._format_bytes(self._bytes_total)}")
+            self._bytes_this_interval = 0
+            self._last_monitor_time = now
+
+    def _format_bytes(self, num_bytes):
+        units = ['B', 'KB', 'MB', 'GB']
+        value = float(num_bytes)
+        unit_idx = 0
+        while value >= 1024 and unit_idx < len(units) - 1:
+            value /= 1024
+            unit_idx += 1
+        return f"{value:,.2f} {units[unit_idx]}"
+
+    def save(self, data):
+        if not self._started:
+            raise RuntimeError("CacheManager not started")
+        def processor(obj):
             if not isinstance(obj, (torch.Tensor, np.ndarray)):
                 return obj
             if self._max_tensor_size_mb is not None:
                 size_mb = _tensor_size_mb(obj)
                 if size_mb > self._max_tensor_size_mb:
-                    print(f"[DUMP WARN] Tensor size {size_mb:.2f} MB exceeds limit {self._max_tensor_size_mb} MB, replacing with None")
+                    print(f"[DUMP WARN] Tensor size {size_mb:.2f} MB exceeds limit, replacing with None")
                     return None
             storage = Storage(obj)
             cache_id = storage.cache_id
@@ -62,8 +100,12 @@ class CacheManager:
             if cache_id not in self._save_cached:
                 storage_tensor = storage.materialize(self._pool)
                 filepath = os.path.join(self.cache_dir, f"{cache_id}.pt")
-                self._io.write(filepath, storage_tensor)
+                self._io.save(filepath, storage_tensor)
                 self._save_cached.add(cache_id)
+                file_size = os.path.getsize(filepath)
+                self._bytes_this_interval += file_size
+                self._bytes_total += file_size
+                self._check_monitor()
             return entry
         return self._traverse(data, processor)
 
@@ -102,6 +144,5 @@ class CacheManager:
             return data
         result = processor(data)
         if result is data:
-            # print(f"[DUMP WARN] Unexpected type '{type(data).__name__}', replacing with None")
             return None
         return result
