@@ -7,6 +7,10 @@ class Config:
     dump_path: str = "."
     dump_enabled: bool = True
     max_tensor_size_mb: int = 10240
+    io_monitor_interval: float = 5.0
+    cache_monitor_interval: float = 5.0
+    async_io: bool = True
+    async_serialization: bool = True
 
     def __post_init__(self):
         annotations = type(self).__annotations__
