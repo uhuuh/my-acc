@@ -7,7 +7,7 @@ Uses a two-process pipeline: SerializationSender (main) + SerializationReceiver 
 
 import torch
 from torch.utils._python_dispatch import TorchDispatchMode
-from . import config
+from .config import config
 from .serialization import create_pipeline
 
 
@@ -60,8 +60,8 @@ class ops_dump(TorchDispatchMode):
     """
 
     def __init__(self, dump_path: str = None, max_tensor_size_mb: int = None):
-        config.init(dump_path=dump_path, max_tensor_size_mb=max_tensor_size_mb)
-        self.enabled = config.get_dump_enabled()
+        config.update(dump_path=dump_path, max_tensor_size_mb=max_tensor_size_mb)
+        self.enabled = config.dump_enabled
         self._in_dispatch = False
         self._sender = None
         self._dump_path = dump_path

@@ -24,7 +24,7 @@ import linecache
 
 import torch
 
-from . import config
+from .config import config
 from .cache import CacheEntry, CacheManager
 from .io import IOWriter
 
@@ -180,11 +180,11 @@ class SerializationSender:
     """Runs in main process: collects raw frames, caches tensors, queues for receiver."""
 
     def __init__(self, dump_path: Optional[str] = None, max_tensor_size_mb: Optional[int] = None):
-        config.init(dump_path=dump_path, max_tensor_size_mb=max_tensor_size_mb)
-        self.dump_path = config.get_dump_path()
+        config.update(dump_path=dump_path, max_tensor_size_mb=max_tensor_size_mb)
+        self.dump_path = config.dump_path
         if not self.dump_path:
             raise ValueError("dump_path is not set. Provide dump_path or set ACC_DUMP_PATH env var.")
-        self.max_tensor_size_mb = config.get_max_tensor_size_mb()
+        self.max_tensor_size_mb = config.max_tensor_size_mb
         self.session_dir: Optional[str] = None
         self.sequence: int = 0
         self._cache_mgr: Optional[CacheManager] = None
