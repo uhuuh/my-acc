@@ -25,9 +25,13 @@ class _OpsDumpContext:
 
 
 def ops_dump(dump_path=None, **kwargs):
+    if callable(dump_path) and not isinstance(dump_path, str):
+        func, dump_path = dump_path, None
+    else:
+        func = None
     merged = {k: v for k, v in kwargs.items() if v is not None}
     if dump_path is not None:
         merged['dump_path'] = dump_path
     config.update(**merged)
-    mgr = Manager()
-    return _OpsDumpContext(mgr)
+    ctx = _OpsDumpContext(Manager())
+    return ctx(func) if func else ctx

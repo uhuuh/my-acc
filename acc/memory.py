@@ -1,8 +1,8 @@
 """Pin memory pool with pluggable allocator and Storage helper."""
 
+import time
 import numpy as np
 import torch
-from typing import Optional, Union
 
 
 class PinMemoryAllocator:
@@ -35,45 +35,106 @@ class NaiveAllocator(PinMemoryAllocator):
 
 
 class AdvancedAllocator(PinMemoryAllocator):
-    """Free-list allocator with per-size buckets."""
+    """Power-of-2 size-class free-list allocator with view-based splitting."""
 
     def __init__(self):
-        self._free: dict[int, list[torch.Tensor]] = {}
+        self._free: list[list[torch.Tensor]] = []
+        self._allocated: dict[int, torch.Tensor] = {}
         self._pool_bytes = 0
         self._pool_bytes_delta = 0
+        self._acquire_total = 0
+        self._acquire_hits = 0
+        self._start_time = 0.0
+        self._last_monitor_time = 0.0
+
+    def _check_monitor(self):
+        from .config import config
+        now = time.time()
+        elapsed = now - self._last_monitor_time
+        if elapsed < config.pool_monitor_interval:
+            return
+        free = sum(len(bucket) for bucket in self._free)
+        used = len(self._allocated)
+        used_bytes = sum(self._block_bytes(b) for b in self._allocated.values())
+        total_bytes = self._pool_bytes + used_bytes
+        ratio = (self._acquire_hits / self._acquire_total * 100) if self._acquire_total > 0 else 0
+        print(f"[POOL MONITOR] interval={elapsed:.1f}s total={now - self._start_time:.1f}s: "
+              f"Blocks: {free + used} ({used} in use) | "
+              f"Acquires: {self._acquire_total} ({self._acquire_hits} hits, {ratio:.1f}%) | "
+              f"Memory: {self._format_bytes(total_bytes)} ({self._format_bytes(self._pool_bytes)} free)")
+        self._last_monitor_time = now
+
+    def _format_bytes(self, n):
+        units = ['B', 'KB', 'MB', 'GB']
+        value = float(n)
+        unit_idx = 0
+        while value >= 1024 and unit_idx < len(units) - 1:
+            value /= 1024
+            unit_idx += 1
+        return f"{value:,.2f} {units[unit_idx]}"
 
     def _block_bytes(self, block):
         return block.numel() * block.element_size()
 
+    @staticmethod
+    def _next_pow2(n):
+        if n <= 0:
+            return 1
+        return 1 << (n - 1).bit_length()
+
+    def _ensure_bucket(self, idx):
+        while len(self._free) <= idx:
+            self._free.append([])
+
+    def _find_free(self, start_idx: int):
+        self._ensure_bucket(start_idx)
+        for i in range(start_idx, len(self._free)):
+            if self._free[i]:
+                return self._free[i].pop()
+        return None
+
     def acquire(self, size: int) -> torch.Tensor:
-        sizes = sorted(k for k in self._free if k >= size)
-        for bucket_size in sizes:
-            blocks = self._free[bucket_size]
-            block = blocks.pop()
-            if not blocks:
-                del self._free[bucket_size]
-            self._pool_bytes -= self._block_bytes(block)
-            self._pool_bytes_delta -= self._block_bytes(block)
-            block = block.reshape(-1)
-            if bucket_size > size:
-                leftover = block[size:]
-                self._release_block(leftover.contiguous())
-                block = block[:size].contiguous()
-            return block
-        return torch.empty(size, pin_memory=True)
+        self._acquire_total += 1
+        if self._start_time == 0.0:
+            self._start_time = time.time()
+            self._last_monitor_time = self._start_time
+        aligned = self._next_pow2(size)
+        start_idx = aligned.bit_length() - 1
+
+        block = self._find_free(start_idx)
+        if block is not None:
+            self._acquire_hits += 1
+            b = self._block_bytes(block)
+            self._pool_bytes -= b
+            self._pool_bytes_delta -= b
+        else:
+            block = torch.empty(aligned, pin_memory=True)
+
+        self._allocated[block.untyped_storage().data_ptr()] = block
+        self._check_monitor()
+        return block[:size]
 
     def release(self, block: torch.Tensor) -> None:
-        self._release_block(block)
+        key = block.untyped_storage().data_ptr()
+        if key in self._allocated:
+            full_block = self._allocated.pop(key)
+            self._release_block(full_block)
+        else:
+            print(f"[POOL WARN] release: block not found in _allocated (ptr=0x{key:x}), falling back")
+            self._release_block(block)
 
     def _release_block(self, block: torch.Tensor) -> None:
         flat = block.reshape(-1)
-        key = flat.numel()
+        n = flat.numel()
+        if n == 0:
+            return
+        aligned = self._next_pow2(n)
+        idx = aligned.bit_length() - 1
+        self._ensure_bucket(idx)
+        self._free[idx].append(flat)
         b = self._block_bytes(flat)
         self._pool_bytes += b
         self._pool_bytes_delta += b
-        if key not in self._free:
-            self._free[key] = []
-        self._free[key].append(flat)
 
     def pool_stats(self):
         delta = self._pool_bytes_delta
@@ -84,43 +145,21 @@ class AdvancedAllocator(PinMemoryAllocator):
 class Storage:
     """Wraps a tensor/numpy array: compute cache_id on create, materialize via allocator."""
 
-    def __init__(self, obj: Union[torch.Tensor, np.ndarray]):
+    def __init__(self, obj: torch.Tensor | np.ndarray):
         self._obj = obj
-        self._materialized: Optional[torch.Tensor] = None
-        self._allocator: Optional[PinMemoryAllocator] = None
         if isinstance(obj, np.ndarray):
             t = torch.from_numpy(obj).contiguous()
         else:
             t = obj.detach().contiguous()
         self.cache_id: str = f"ptr_{t.data_ptr()}_{t.numel()}_{t._version}"
-        self._dtype = t.dtype
-        self._shape = list(t.shape)
 
     def materialize(self, allocator: PinMemoryAllocator) -> torch.Tensor:
         """Acquire pinned memory, copy tensor to CPU, return storage tensor."""
-        self._allocator = allocator
         if isinstance(self._obj, np.ndarray):
-            cpu_tensor = torch.from_numpy(self._obj).contiguous()
+            flat = torch.from_numpy(self._obj).contiguous()
         else:
-            cpu_tensor = self._obj.detach().contiguous().cpu()
-        flat = cpu_tensor.reshape(-1)
+            flat = self._obj.detach().contiguous()
         storage = allocator.acquire(flat.numel())
-        storage = storage.reshape(-1)
-        if storage.numel() >= flat.numel():
-            storage[:flat.numel()].copy_(flat)
-            self._materialized = storage[:flat.numel()].reshape(cpu_tensor.shape)
-        else:
-            storage2 = torch.empty(flat.shape, dtype=flat.dtype, pin_memory=True)
-            storage2.copy_(flat)
-            allocator.release(storage)
-            self._materialized = storage2.reshape(cpu_tensor.shape)
-        return self._materialized
-
-    def release(self) -> None:
-        if self._materialized is not None and self._allocator is not None:
-            self._allocator.release(self._materialized)
-            self._materialized = None
-            self._allocator = None
-
-    def __del__(self):
-        self.release()
+        storage = storage.reshape(flat.shape)
+        storage.copy_(flat)
+        return storage

@@ -11,7 +11,7 @@ import time
 import atexit
 import torch
 import threading
-from typing import Any, Set, Optional, Dict, Tuple, Callable
+from typing import Dict, Tuple, Callable
 
 
 class FileHandler:
@@ -64,8 +64,9 @@ class FileHandler:
 
 
 class IOWriter:
-    def __init__(self, name: str = "", enable_async: bool = None):
+    def __init__(self, name: str = "", enable_async: bool = None, on_done=None):
         self.name = name
+        self._on_done = on_done
         if enable_async is None:
             from .config import config
             enable_async = config.async_io
@@ -126,6 +127,8 @@ class IOWriter:
         else:
             self._handler.write(file_path, content)
             self._bytes_written += os.path.getsize(file_path)
+            self._files_written += 1
+            self._check_on_done(content)
 
     def load(self, file_path):
         return self._handler.read(file_path)
@@ -134,7 +137,6 @@ class IOWriter:
         while True:
             item = self._queue.get()
             if item is None:
-                self._queue.task_done()
                 break
             file_path, content = item
             try:
@@ -146,7 +148,11 @@ class IOWriter:
                 print(f"[IO ERROR] Failed to write {file_path}: {e}")
             finally:
                 self._pending_files.discard(file_path)
-                self._queue.task_done()
+                self._check_on_done(content)
+
+    def _check_on_done(self, content):
+        if self._on_done:
+            self._on_done(content)
 
     def _check_monitor(self):
         from .config import config
@@ -157,8 +163,6 @@ class IOWriter:
             throughput = self._bytes_written / elapsed if elapsed > 0 else 0
             throughput_str = self._format_bytes(throughput)
             print(f"[IO MONITOR] {self.name}: Written: {self._files_written} files ({self._format_bytes(self._bytes_written)}) | Pending: {pending_count} files | Throughput: {throughput_str}/s")
-            self._bytes_written = 0
-            self._files_written = 0
             self._last_monitor_time = now
 
     def _format_bytes(self, bytes_per_sec):

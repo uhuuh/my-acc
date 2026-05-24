@@ -19,7 +19,6 @@ from typing import Any, List, Dict, Tuple, Optional
 from .config import config
 from .cache import CacheEntry, CacheManager
 from .io import IOWriter
-from .memory import PinMemoryAllocator
 
 
 @dataclass
@@ -172,9 +171,6 @@ class Serializer:
         cache_mgr = CacheManager()
         cache_mgr.cache_dir = cache_dir
         cache_mgr._io = cache_io
-        cache_mgr._pool = PinMemoryAllocator.create("advanced")
-        cache_mgr._max_tensor_size_mb = 10240
-        cache_mgr._save_cached = set()
         cache_mgr._load_cached = {}
         cache_mgr._started = True
         resolved_args = cache_mgr.load(inputs['args'])
@@ -202,9 +198,9 @@ class AsyncSerializer:
     def stop(self):
         self.queue.put(None)
         if self._process is not None:
-            self._process.join(timeout=10)
-            if self._process.is_alive():
-                self._process.terminate()
+            while self._process.is_alive():
+                print(f"[ASYNC SERIALIZER] waiting for subprocess...")
+                self._process.join(timeout=1)
         print(f"[ASYNC SERIALIZER] stopped")
 
     def save(self, item):

@@ -47,10 +47,10 @@ class CacheManager:
         self._started = True
         self.cache_dir = os.path.join(session_dir, 'cache')
         os.makedirs(self.cache_dir, exist_ok=False)
-        self._io = IOWriter(name="cache")
-        self._io.start()
         self._pool = PinMemoryAllocator.create("advanced")
         self._max_tensor_size_mb = config.max_tensor_size_mb
+        self._io = IOWriter(name="cache", on_done=self._on_io_done)
+        self._io.start()
         self._save_cached = set()
         self._load_cached = {}
         self._writes_this_interval = 0
@@ -65,6 +65,10 @@ class CacheManager:
             self._io.stop()
         self._started = False
         print(f"[CACHE] stopped")
+
+    def _on_io_done(self, content):
+        if isinstance(content, torch.Tensor) and self._pool is not None:
+            self._pool.release(content)
 
     def _check_monitor(self):
         from .config import config

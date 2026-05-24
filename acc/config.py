@@ -9,6 +9,7 @@ class Config:
     max_tensor_size_mb: int = 10240
     io_monitor_interval: float = 5.0
     cache_monitor_interval: float = 5.0
+    pool_monitor_interval: float = 5.0
     async_io: bool = True
     async_serialization: bool = True
     io_flush_mode: str = "atexit"
