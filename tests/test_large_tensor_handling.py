@@ -11,6 +11,8 @@ import tempfile
 import json
 import pickle
 from acc import ops_dump
+from acc.config import config
+from acc.cache import CacheEntry
 
 
 def test_large_tensor_replaced_with_none():
@@ -20,16 +22,12 @@ def test_large_tensor_replaced_with_none():
     print("=" * 60)
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Create ops_dump with small threshold (1MB for testing)
-        os.environ['ACC_MAX_TENSOR_SIZE_MB'] = '1'
-        try:
-            with ops_dump(tmpdir) as dumper:
-                # Create a tensor larger than 1MB
-                # float32 = 4 bytes, so 256*256*256 = 16MB
-                large_tensor = torch.randn(256, 256, 256)
-                result = large_tensor + 1
-        finally:
-            os.environ.pop('ACC_MAX_TENSOR_SIZE_MB', None)
+        config.update(max_tensor_size_mb=1)
+        with ops_dump(tmpdir) as dumper:
+            # Create a tensor larger than 1MB
+            # float32 = 4 bytes, so 256*256*256 = 16MB
+            large_tensor = torch.randn(256, 256, 256)
+            result = large_tensor + 1
 
         # Get session directory
         dump_dirs = [d for d in os.listdir(tmpdir) if os.path.isdir(os.path.join(tmpdir, d))]
@@ -84,9 +82,7 @@ def test_default_max_tensor_size():
     print("=" * 60)
 
     from acc.serialization import SerializationSender
-    sender = SerializationSender.__new__(SerializationSender)
-    # Trigger the __init__ env var logic manually
-    os.environ.pop('ACC_MAX_TENSOR_SIZE_MB', None)
+    config.update(max_tensor_size_mb=10240)
     sender = SerializationSender("/tmp/test_dummy")
     assert sender.max_tensor_size_mb == 10240, \
         f"Default max_tensor_size_mb should be 10240 (10GB), got {sender.max_tensor_size_mb}"

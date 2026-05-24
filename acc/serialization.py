@@ -180,7 +180,12 @@ class SerializationSender:
     """Runs in main process: collects raw frames, caches tensors, queues for receiver."""
 
     def __init__(self, dump_path: Optional[str] = None, max_tensor_size_mb: Optional[int] = None):
-        config.update(dump_path=dump_path, max_tensor_size_mb=max_tensor_size_mb)
+        kwargs = {}
+        if dump_path is not None:
+            kwargs['dump_path'] = dump_path
+        if max_tensor_size_mb is not None:
+            kwargs['max_tensor_size_mb'] = max_tensor_size_mb
+        config.update(**kwargs)
         self.dump_path = config.dump_path
         if not self.dump_path:
             raise ValueError("dump_path is not set. Provide dump_path or set ACC_DUMP_PATH env var.")

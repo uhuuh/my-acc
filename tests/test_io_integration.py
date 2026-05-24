@@ -1,8 +1,9 @@
 # tests/test_io_integration.py
-import tempfile
 import os
+import tempfile
 from acc import ops_dump
 from acc.serialization import create_pipeline
+from acc.config import config
 
 
 def test_create_pipeline():
@@ -37,16 +38,14 @@ def test_ops_dump_creates_files():
 
 
 def test_ops_dump_disabled_no_files():
-    """Test ops_dump with ACC_DUMP_ENABLED=0 creates no files."""
+    """Test ops_dump with dump_enabled=False creates no files."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        os.environ['ACC_DUMP_ENABLED'] = '0'
-        try:
-            with ops_dump(tmpdir) as dumper:
-                import torch
-                a = torch.randn(2, 3)
-                _ = a + 1
-        finally:
-            os.environ.pop('ACC_DUMP_ENABLED', None)
+        config.update(dump_enabled=False)
+        with ops_dump(tmpdir) as dumper:
+            import torch
+            a = torch.randn(2, 3)
+            _ = a + 1
+        config.update(dump_enabled=True)
 
         dump_dirs = [d for d in os.listdir(tmpdir) if os.path.isdir(os.path.join(tmpdir, d))]
         assert len(dump_dirs) == 0

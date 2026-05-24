@@ -60,7 +60,12 @@ class ops_dump(TorchDispatchMode):
     """
 
     def __init__(self, dump_path: str = None, max_tensor_size_mb: int = None):
-        config.update(dump_path=dump_path, max_tensor_size_mb=max_tensor_size_mb)
+        kwargs = {}
+        if dump_path is not None:
+            kwargs['dump_path'] = dump_path
+        if max_tensor_size_mb is not None:
+            kwargs['max_tensor_size_mb'] = max_tensor_size_mb
+        config.update(**kwargs)
         self.enabled = config.dump_enabled
         self._in_dispatch = False
         self._sender = None
