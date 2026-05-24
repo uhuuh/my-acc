@@ -71,6 +71,7 @@ class IOWriter:
         self.enable_async = enable_async
         self._pending_files = set()
         self._bytes_written = 0
+        self._files_written = 0
         self._last_monitor_time = 0.0
         self._handler = FileHandler()
         self._thread = None
@@ -78,6 +79,7 @@ class IOWriter:
             self._queue = queue.Queue()
 
     def start(self):
+        print(f"[IO] {self.name} started" + (" (async)" if self.enable_async else " (sync)"))
         if self.enable_async:
             self._last_monitor_time = time.time()
             self._thread = threading.Thread(target=self._worker, daemon=True)
@@ -85,6 +87,7 @@ class IOWriter:
 
     def stop(self):
         if not self.enable_async:
+            print(f"[IO] {self.name} stopped")
             return
         self._queue.put(None)
         while True:
@@ -95,11 +98,12 @@ class IOWriter:
             time.sleep(1)
         self._thread.join()
         self._thread = None
+        print(f"[IO] {self.name} stopped")
 
     def save(self, file_path, content):
         if self.enable_async:
             self._pending_files.add(file_path)
-            self._queue.put((file_path, content))
+            self._queue.put_nowait((file_path, content))
         else:
             self._handler.write(file_path, content)
             self._bytes_written += os.path.getsize(file_path)
@@ -117,6 +121,7 @@ class IOWriter:
             try:
                 self._handler.write(file_path, content)
                 self._bytes_written += os.path.getsize(file_path)
+                self._files_written += 1
                 self._check_monitor()
             except Exception as e:
                 print(f"[IO ERROR] Failed to write {file_path}: {e}")
@@ -132,8 +137,9 @@ class IOWriter:
             pending_count = len(self._pending_files)
             throughput = self._bytes_written / elapsed if elapsed > 0 else 0
             throughput_str = self._format_bytes(throughput)
-            print(f"[IO MONITOR] Pending: {pending_count} files | Throughput: {throughput_str}/s")
+            print(f"[IO MONITOR] {self.name}: Written: {self._files_written} files ({self._format_bytes(self._bytes_written)}) | Pending: {pending_count} files | Throughput: {throughput_str}/s")
             self._bytes_written = 0
+            self._files_written = 0
             self._last_monitor_time = now
 
     def _format_bytes(self, bytes_per_sec):

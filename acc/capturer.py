@@ -54,12 +54,16 @@ class Capturer(TorchDispatchMode):
         if self._enabled:
             _active_session = self
             self.__enter__()
+            print(f"[CAPTURER] started (dump_enabled={self._enabled})")
+        else:
+            print(f"[CAPTURER] not started (dump_enabled={self._enabled})")
 
     def stop(self):
         global _active_session
         _active_session = None
         self.__exit__(None, None, None)
         self._handler = None
+        print(f"[CAPTURER] stopped")
 
     def __torch_dispatch__(self, func, types, args=(), kwargs=None):
         if not self._enabled or self._in_dispatch or self._handler is None:

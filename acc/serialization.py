@@ -111,10 +111,12 @@ class Serializer:
         self.session_dir = session_dir
         self._io = IOWriter(name="seq")
         self._io.start()
+        print(f"[SERIALIZER] started: {self.session_dir}")
 
     def stop(self):
         if self._io is not None:
             self._io.stop()
+        print(f"[SERIALIZER] stopped")
 
     def save(self, item):
         seq = item['sequence']
@@ -195,6 +197,7 @@ class AsyncSerializer:
             args=(self.session_dir, self.queue)
         )
         self._process.start()
+        print(f"[ASYNC SERIALIZER] started (subprocess): {self.session_dir}")
 
     def stop(self):
         self.queue.put(None)
@@ -202,9 +205,10 @@ class AsyncSerializer:
             self._process.join(timeout=10)
             if self._process.is_alive():
                 self._process.terminate()
+        print(f"[ASYNC SERIALIZER] stopped")
 
     def save(self, item):
-        self.queue.put(item)
+        self.queue.put_nowait(item)
 
 
 def _serializer_subprocess(session_dir, queue):
@@ -222,12 +226,3 @@ def _serializer_subprocess(session_dir, queue):
             print(f"[DUMP ERROR] {seq:06d} | {opname} | serializer.save failed: {e}")
     serializer.stop()
 
-
-class SerializationManager:
-    @staticmethod
-    def load_metadata(json_path):
-        return Serializer.load_metadata(json_path)
-
-    @staticmethod
-    def load_data(pkl_path, storage_dir):
-        return Serializer.load_data(pkl_path, storage_dir)

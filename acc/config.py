@@ -38,5 +38,6 @@ class Config:
             if old_value != value:
                 print(f"[CONFIG] {name}: {old_value} -> {value}")
                 setattr(self, name, value)
+                os.environ[f"ACC_{name.upper()}"] = str(value)
 
 config = Config()

@@ -33,13 +33,16 @@ class Manager:
             f"{rank}-{pid}-{timestamp}-{session_id}"
         )
         os.makedirs(self.session_dir, exist_ok=False)
+        print(f"[MANAGER] started: {self.session_dir}")
 
         self._cache_mgr.start(self.session_dir)
 
         if config.async_serialization:
             self._serializer = AsyncSerializer()
+            print(f"[MANAGER] using async serializer")
         else:
             self._serializer = Serializer()
+            print(f"[MANAGER] using sync serializer")
         self._serializer.start(self.session_dir)
 
         self._sequence = 0
@@ -52,6 +55,7 @@ class Manager:
         if self._serializer is not None:
             self._serializer.stop()
         self._cache_mgr.stop()
+        print(f"[MANAGER] stopped")
 
     def _handler(self, opname, args, kwargs, outputs):
         frames = []

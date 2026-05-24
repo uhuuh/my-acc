@@ -20,6 +20,9 @@ class PinMemoryAllocator:
     def release(self, block: torch.Tensor) -> None:
         raise NotImplementedError
 
+    def pool_stats(self):
+        return None
+
 
 class NaiveAllocator(PinMemoryAllocator):
     """Every acquire allocates fresh pinned memory; release discards it."""
@@ -36,6 +39,11 @@ class AdvancedAllocator(PinMemoryAllocator):
 
     def __init__(self):
         self._free: dict[int, list[torch.Tensor]] = {}
+        self._pool_bytes = 0
+        self._pool_bytes_delta = 0
+
+    def _block_bytes(self, block):
+        return block.numel() * block.element_size()
 
     def acquire(self, size: int) -> torch.Tensor:
         sizes = sorted(k for k in self._free if k >= size)
@@ -44,6 +52,8 @@ class AdvancedAllocator(PinMemoryAllocator):
             block = blocks.pop()
             if not blocks:
                 del self._free[bucket_size]
+            self._pool_bytes -= self._block_bytes(block)
+            self._pool_bytes_delta -= self._block_bytes(block)
             block = block.reshape(-1)
             if bucket_size > size:
                 leftover = block[size:]
@@ -58,9 +68,17 @@ class AdvancedAllocator(PinMemoryAllocator):
     def _release_block(self, block: torch.Tensor) -> None:
         flat = block.reshape(-1)
         key = flat.numel()
+        b = self._block_bytes(flat)
+        self._pool_bytes += b
+        self._pool_bytes_delta += b
         if key not in self._free:
             self._free[key] = []
         self._free[key].append(flat)
+
+    def pool_stats(self):
+        delta = self._pool_bytes_delta
+        self._pool_bytes_delta = 0
+        return (self._pool_bytes, delta)
 
 
 class Storage:

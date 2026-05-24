@@ -35,8 +35,10 @@ class CacheManager:
         self._load_cached: Dict[str, torch.Tensor] = {}
         self._pool = None
         self._max_tensor_size_mb = None
-        self._bytes_this_interval = 0
-        self._bytes_total = 0
+        self._writes_this_interval = 0
+        self._writes_total = 0
+        self._hits_this_interval = 0
+        self._hits_total = 0
         self._last_monitor_time = 0.0
         self._started = False
 
@@ -45,28 +47,51 @@ class CacheManager:
         self._started = True
         self.cache_dir = os.path.join(session_dir, 'cache')
         os.makedirs(self.cache_dir, exist_ok=False)
-        self._io = IOWriter(name="cache", enable_async=False)
+        self._io = IOWriter(name="cache")
         self._io.start()
         self._pool = PinMemoryAllocator.create("advanced")
         self._max_tensor_size_mb = config.max_tensor_size_mb
         self._save_cached = set()
         self._load_cached = {}
-        self._bytes_this_interval = 0
-        self._bytes_total = 0
+        self._writes_this_interval = 0
+        self._writes_total = 0
+        self._hits_this_interval = 0
+        self._hits_total = 0
         self._last_monitor_time = _time_module.time()
+        print(f"[CACHE] started: {self.cache_dir}")
 
     def stop(self):
         if self._io is not None:
             self._io.stop()
         self._started = False
+        print(f"[CACHE] stopped")
 
     def _check_monitor(self):
         from .config import config
         now = _time_module.time()
         elapsed = now - self._last_monitor_time
         if elapsed >= config.cache_monitor_interval:
-            print(f"[CACHE MONITOR] Added: {self._format_bytes(self._bytes_this_interval)} | Total: {self._format_bytes(self._bytes_total)}")
-            self._bytes_this_interval = 0
+            i_hits = self._hits_this_interval
+            i_writes = self._writes_this_interval
+            i_rate = i_hits / i_writes * 100 if i_writes > 0 else 0
+            h_hits = self._hits_total
+            h_writes = self._writes_total
+            h_rate = h_hits / h_writes * 100 if h_writes > 0 else 0
+
+            pool_stats = ""
+            if hasattr(self._pool, 'pool_stats'):
+                s = self._pool.pool_stats()
+                if s:
+                    pool_bytes, pool_delta = s
+                    delta_sign = "+" if pool_delta >= 0 else ""
+                    pool_stats = f" | Pool: {self._format_bytes(pool_bytes)} (Δ {delta_sign}{self._format_bytes(abs(pool_delta))})"
+
+            print(f"[CACHE MONITOR] Interval: Hits={i_hits} Writes={i_writes} Rate={i_rate:.1f}%"
+                  f" | Historical: Hits={h_hits} Writes={h_writes} Rate={h_rate:.1f}%"
+                  f"{pool_stats}")
+
+            self._writes_this_interval = 0
+            self._hits_this_interval = 0
             self._last_monitor_time = now
 
     def _format_bytes(self, num_bytes):
@@ -84,6 +109,8 @@ class CacheManager:
         def processor(obj):
             if not isinstance(obj, (torch.Tensor, np.ndarray)):
                 return obj
+            self._writes_this_interval += 1
+            self._writes_total += 1
             if self._max_tensor_size_mb is not None:
                 size_mb = _tensor_size_mb(obj)
                 if size_mb > self._max_tensor_size_mb:
@@ -102,10 +129,10 @@ class CacheManager:
                 filepath = os.path.join(self.cache_dir, f"{cache_id}.pt")
                 self._io.save(filepath, storage_tensor)
                 self._save_cached.add(cache_id)
-                file_size = os.path.getsize(filepath)
-                self._bytes_this_interval += file_size
-                self._bytes_total += file_size
-                self._check_monitor()
+            else:
+                self._hits_this_interval += 1
+                self._hits_total += 1
+            self._check_monitor()
             return entry
         return self._traverse(data, processor)
 
