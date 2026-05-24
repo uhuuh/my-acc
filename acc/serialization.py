@@ -1,10 +1,8 @@
 """
 Serialization helpers and data structures for PyTorch Operator Dump Tool.
 
-Implements two-process pipeline:
-- SerializationSender: collects frames + transforms tensors via CacheManager, queues
-- SerializationReceiver: subprocess, holds SerializationManager, writes .json/.pkl
-- SerializationManager: processes frames + writes files (called by receiver)
+Provides sync and async serializers that process operator frames and write
+.json metadata and .pkl data files via the IOWriter.
 """
 
 import os
@@ -13,20 +11,15 @@ import pickle
 import time
 import uuid
 import multiprocessing as mp
-from datetime import datetime
-
 
 _MP_CONTEXT = mp.get_context('fork')
 from dataclasses import dataclass, field
 from typing import Any, List, Dict, Tuple, Optional
-import sys
-import linecache
-
-import torch
 
 from .config import config
 from .cache import CacheEntry, CacheManager
 from .io import IOWriter
+from .memory import PinMemoryAllocator
 
 
 @dataclass
@@ -109,19 +102,21 @@ def _wrap_outputs(data: Any) -> list:
     return [data]
 
 
-class SerializationManager:
-    """Integrates save (frame processing + file writes) and load (metadata/data).
+class Serializer:
+    def __init__(self):
+        self.session_dir = None
+        self._io = None
 
-    Created and used by SerializationReceiver (subprocess). Does NOT do tensor
-    caching — that is handled by CacheManager in SerializationSender.
-    """
-
-    def __init__(self, session_dir: str, io: IOWriter):
+    def start(self, session_dir):
         self.session_dir = session_dir
-        self._io = io
+        self._io = IOWriter(name="seq")
+        self._io.start()
 
-    def save(self, item: dict):
-        """Process frames, then write .json and .pkl files via _io."""
+    def stop(self):
+        if self._io is not None:
+            self._io.stop()
+
+    def save(self, item):
         seq = item['sequence']
         opname = item['opname']
         frames = item['frames']
@@ -138,18 +133,18 @@ class SerializationManager:
         json_path = os.path.join(self.session_dir, json_filename)
         pkl_path = os.path.join(self.session_dir, pkl_filename)
 
-        self._io.write(json_path, {
+        self._io.save(json_path, {
             'sequence': seq, 'filepath': filepath, 'filename': filename,
             'function': function, 'lineno': lineno, 'opname': opname,
             'call_stack': call_stack,
         })
-        self._io.write(pkl_path, {
+        self._io.save(pkl_path, {
             'inputs': item['inputs'],
             'outputs': item['outputs'],
         })
 
     @staticmethod
-    def load_metadata(json_path: str) -> OperatorRecord:
+    def load_metadata(json_path):
         with open(json_path, 'r') as f:
             metadata = json.load(f)
         return OperatorRecord(
@@ -163,159 +158,76 @@ class SerializationManager:
         )
 
     @staticmethod
-    def load_data(pkl_path: str, storage_dir: str) -> Tuple[Dict, List]:
-        io_writer = IOWriter(enable_async=False)
-        cache_mgr = CacheManager(storage_dir, cache_io=io_writer)
+    def load_data(pkl_path, storage_dir):
         with open(pkl_path, 'rb') as f:
             pkl_data = pickle.load(f)
         inputs = pkl_data['inputs']
         outputs = pkl_data['outputs']
+        cache_io = IOWriter(enable_async=False)
+        cache_dir = storage_dir
+        if not os.path.isdir(cache_dir):
+            cache_dir = os.path.join(os.path.dirname(storage_dir), 'cache')
+        cache_mgr = CacheManager()
+        cache_mgr.cache_dir = cache_dir
+        cache_mgr._io = cache_io
+        cache_mgr._pool = PinMemoryAllocator.create("advanced")
+        cache_mgr._max_tensor_size_mb = 10240
+        cache_mgr._save_cached = set()
+        cache_mgr._load_cached = {}
+        cache_mgr._started = True
         resolved_args = cache_mgr.load(inputs['args'])
         resolved_kwargs = cache_mgr.load(inputs['kwargs'])
         resolved_outputs = cache_mgr.load(outputs)
         return {'args': resolved_args, 'kwargs': resolved_kwargs}, resolved_outputs
 
 
-class SerializationSender:
-    """Runs in main process: collects raw frames, caches tensors, queues for receiver."""
+class AsyncSerializer:
+    def __init__(self):
+        self.session_dir = None
+        self._process = None
+        self.queue = None
 
-    def __init__(self, dump_path: Optional[str] = None, max_tensor_size_mb: Optional[int] = None):
-        kwargs = {}
-        if dump_path is not None:
-            kwargs['dump_path'] = dump_path
-        if max_tensor_size_mb is not None:
-            kwargs['max_tensor_size_mb'] = max_tensor_size_mb
-        config.update(**kwargs)
-        self.dump_path = config.dump_path
-        if not self.dump_path:
-            raise ValueError("dump_path is not set. Provide dump_path or set ACC_DUMP_PATH env var.")
-        self.max_tensor_size_mb = config.max_tensor_size_mb
-        self.session_dir: Optional[str] = None
-        self.sequence: int = 0
-        self._cache_mgr: Optional[CacheManager] = None
-        self._cache_io: Optional[IOWriter] = None
-        self._start_time: Optional[float] = None
-        self.queue: mp.Queue = _MP_CONTEXT.Queue()
-        self._process: Optional[mp.Process] = None
-
-    def start(self) -> str:
-        import torch.distributed as dist
-        if dist.is_initialized():
-            rank = dist.get_rank()
-        else:
-            rank = "None"
-        pid = os.getpid()
-        timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-        session_id = uuid.uuid4().hex[:8]
-        self.session_dir = os.path.join(
-            self.dump_path,
-            f"{rank}-{pid}-{timestamp}-{session_id}"
+    def start(self, session_dir):
+        self.session_dir = session_dir
+        self.queue = _MP_CONTEXT.Queue()
+        self._process = _MP_CONTEXT.Process(
+            target=_serializer_subprocess,
+            args=(self.session_dir, self.queue)
         )
-        os.makedirs(self.session_dir, exist_ok=False)
-        storage_dir = os.path.join(self.session_dir, 'storage')
-        os.makedirs(storage_dir, exist_ok=False)
-        self._cache_io = IOWriter(name="cache", enable_async=True)
-        self._cache_mgr = CacheManager(
-            storage_dir, cache_io=self._cache_io, max_tensor_size_mb=self.max_tensor_size_mb
-        )
-        self.sequence = 0
-        self._start_time = time.time()
-        print(f"[DUMP] Created session directory: {self.session_dir}")
-        return self.session_dir
-
-    def _ensure_process(self):
-        if self._process is None:
-            self._process = _MP_CONTEXT.Process(target=_receiver_main, args=(self.session_dir, self.queue))
-            self._process.start()
-
-    def save_operation(self, opname: str, args: tuple, kwargs: dict, outputs) -> int:
-        """Collect raw frames, cache tensors, queue for receiver."""
-        if self._cache_mgr is None:
-            raise RuntimeError("Sender not started")
-        self._ensure_process()
-
-        frames = []
-        f = sys._getframe(0)
-        while f:
-            frames.append(f)
-            f = f.f_back
-
-        frame_dicts = [
-            {
-                'filepath': f.f_code.co_filename,
-                'lineno': f.f_lineno,
-                'function': f.f_code.co_name,
-                'line': linecache.getline(f.f_code.co_filename, f.f_lineno).rstrip('\n'),
-            }
-            for f in reversed(frames)
-        ]
-
-        serialized_args = self._cache_mgr.save(args)
-        serialized_kwargs = self._cache_mgr.save(kwargs or {})
-        serialized_outputs = self._cache_mgr.save(_wrap_outputs(outputs))
-
-        seq = self.sequence
-        item = {
-            'sequence': seq,
-            'opname': opname,
-            'frames': frame_dicts,
-            'inputs': {'args': serialized_args, 'kwargs': serialized_kwargs},
-            'outputs': serialized_outputs,
-        }
-        try:
-            self.queue.put(item)
-        except Exception as e:
-            print(f"[DUMP ERROR] {seq:06d} | {opname} | queue put failed: {e}")
-            self.sequence += 1
-            return seq
-        self.sequence += 1
-        return seq
+        self._process.start()
 
     def stop(self):
-        if self._cache_io is not None:
-            self._cache_io.wait_complete()
         self.queue.put(None)
         if self._process is not None:
             self._process.join(timeout=10)
             if self._process.is_alive():
                 self._process.terminate()
-        elapsed = time.time() - self._start_time if self._start_time else 0
-        print(f"[DUMP] Session completed: {self.sequence} operators dumped to {self.session_dir} in {elapsed:.1f}s")
+
+    def save(self, item):
+        self.queue.put(item)
 
 
-class SerializationReceiver:
-    """Runs in subprocess: holds SerializationManager, calls manager.save(item)."""
-
-    def __init__(self, session_dir: str, queue: mp.Queue):
-        self.session_dir = session_dir
-        self._queue = queue
-
-    def run(self):
-        io = IOWriter(name="seq", enable_async=True)
-        mgr = SerializationManager(self.session_dir, io)
-        while True:
-            item = self._queue.get()
-
-            if item is None:
-                break
-            try:
-                mgr.save(item)
-            except Exception as e:
-                seq = item.get('sequence', '?')
-                opname = item.get('opname', '?')
-                print(f"[DUMP ERROR] {seq:06d} | {opname} | manager.save failed: {e}")
-        io.wait_complete()
+def _serializer_subprocess(session_dir, queue):
+    serializer = Serializer()
+    serializer.start(session_dir)
+    while True:
+        item = queue.get()
+        if item is None:
+            break
+        try:
+            serializer.save(item)
+        except Exception as e:
+            seq = item.get('sequence', '?')
+            opname = item.get('opname', '?')
+            print(f"[DUMP ERROR] {seq:06d} | {opname} | serializer.save failed: {e}")
+    serializer.stop()
 
 
-def _receiver_main(session_dir, queue):
-    """Module-level target for multiprocessing spawn."""
-    receiver = SerializationReceiver(session_dir, queue)
-    receiver.run()
+class SerializationManager:
+    @staticmethod
+    def load_metadata(json_path):
+        return Serializer.load_metadata(json_path)
 
-
-def create_pipeline(dump_path: str, max_tensor_size_mb: Optional[int] = None) -> SerializationSender:
-    """Factory: create sender + start receiver subprocess, return sender."""
-    sender = SerializationSender(dump_path, max_tensor_size_mb=max_tensor_size_mb)
-    sender.start()
-    sender._ensure_process()
-    return sender
+    @staticmethod
+    def load_data(pkl_path, storage_dir):
+        return Serializer.load_data(pkl_path, storage_dir)
