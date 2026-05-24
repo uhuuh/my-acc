@@ -65,7 +65,8 @@ class FileHandler:
 class IOWriter:
     """IO Writer with a background thread for async file writes."""
 
-    def __init__(self, enable_async: bool = True, monitor_interval: float = 5.0):
+    def __init__(self, name: str = "", enable_async: bool = True, monitor_interval: float = 5.0):
+        self.name = name
         self.enable_async = enable_async
         self._pending_files: Set[str] = set()
         self._monitor_interval = monitor_interval

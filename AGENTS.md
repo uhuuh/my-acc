@@ -19,17 +19,27 @@
 - `weights_only=False` is required for `torch.load` (PyTorch 2.6+ safe-mode default blocks custom classes)
 
 ## Architecture
-- `acc/__init__.py` exports: `ops_dump`, `ops_comp`, `OperatorRecord`, `SerializationSession`, `IOWriter`
-- `dump.py`: `ops_dump` context manager / decorator → patches `torch.library.impl` + wraps operators via `TorchDispatchMode`
-- `comp.py`: `ops_comp` → LCS matching between two dump sessions
-- `serialization.py`: `SerializationSession` — manages dump sessions, `OperatorRecord` dataclass
-- `cache.py`: `CacheEntry` / `CacheManager` — content-addressable tensor dedup via blake2b hash
-- `io.py`: `IOWriter` — async or sync file writes
+- `acc/__init__.py` exports: `ops_dump`, `ops_comp`, `OperatorRecord`, `SerializationSender`, `SerializationReceiver`, `load_metadata`, `load_data`, `IOWriter`, `CacheEntry`, `CacheManager`, `resolve_cache_entry`, `resolve_cache_entries`
+- `dump.py`: `ops_dump` context manager / decorator → patches `torch.library.impl` + wraps operators via `TorchDispatchMode`; creates SerializationSender (main process) + spawns SerializationReceiver (subprocess)
+- `memory.py`: `PinMemoryAllocator` base, `NaiveAllocator`, `AdvancedAllocator` (free-list buckets by size), `Storage` (compute cache_id + materialize via allocator)
+- `cache.py`: `CacheEntry` dataclass, `CacheManager` (tracks cache_id set, owns PinMemoryPool, writes .pt via cache IOWriter), `resolve_cache_entry` / `resolve_cache_entries` for loading
+- `serialization.py`: `SerializationSender` (transforms tensors via CacheManager, queues data), `SerializationReceiver` (subprocess target, writes .json/.pkl via seq IOWriter), `OperatorRecord`, `load_metadata`, `load_data`
+- `io.py`: `IOWriter` with `name` attribute ("cache"/"seq"), `FileHandler` with module-level handler functions (pickle-safe for spawn)
+- `comp.py`: `ops_comp` → LCS matching between two dump sessions, uses `load_metadata`/`load_data`
 - `formatting.py`: display helpers
 - `comparators.py`: per-operator comparison logic
 
-## Environment
-- `ACC_DUMP_PATH=<path>`: fallback when `ops_dump(dump_path=None)` is called (required if dump_path is None)
+## Multiprocessing
+- Uses `mp.get_context('fork')` for subprocess — faster, no `if __name__` requirement
+- Queue is created with fork context in `SerializationSender.__init__`
+- `_receiver_main(session_dir, queue)` is the module-level target for Process
+- WARNING: `fork` from multi-threaded process produces a deprecation warning but is safe — child process does not touch parent's daemon threads or CUDA contexts
+
+## Config
+- `acc/config.py` — centralized config via `config.init()` and `config.get_*()` functions
+- `config.init()` sets env vars (`ACC_DUMP_PATH`, `ACC_DUMP_ENABLED`, `ACC_MAX_TENSOR_SIZE_MB`); conflicts print a warning
+- `ops_dump.__init__` calls `config.init()`; all modules read via config getters
+- `ACC_DUMP_PATH=<path>`: required (via arg or env var)
 - `ACC_DUMP_ENABLED=0` disables all dump capture globally
 - `my/` directory is gitignored — user-specific output/analysis files
 

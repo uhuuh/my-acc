@@ -83,15 +83,16 @@ def test_default_max_tensor_size():
     print("Test: Default max tensor size is 10GB")
     print("=" * 60)
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        # Create ops_dump without specifying max_tensor_size_mb
-        with ops_dump(tmpdir) as dumper:
-            # Check default value
-            assert dumper.max_tensor_size_mb == 10240, \
-                f"Default max_tensor_size_mb should be 10240 (10GB), got {dumper.max_tensor_size_mb}"
-            print(f"Default max_tensor_size_mb: {dumper.max_tensor_size_mb} MB (10GB)")
+    from acc.serialization import SerializationSender
+    sender = SerializationSender.__new__(SerializationSender)
+    # Trigger the __init__ env var logic manually
+    os.environ.pop('ACC_MAX_TENSOR_SIZE_MB', None)
+    sender = SerializationSender("/tmp/test_dummy")
+    assert sender.max_tensor_size_mb == 10240, \
+        f"Default max_tensor_size_mb should be 10240 (10GB), got {sender.max_tensor_size_mb}"
+    print(f"Default max_tensor_size_mb: {sender.max_tensor_size_mb} MB (10GB)")
 
-        print("PASS: Default max tensor size is 10GB\n")
+    print("PASS: Default max tensor size is 10GB\n")
 
 
 def test_contiguous_error_handling():

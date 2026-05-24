@@ -5,7 +5,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import tempfile
 import torch
 import numpy as np
-from acc.cache import CacheEntry, CacheManager, _extract_storage, _compute_hash
+from acc.cache import CacheEntry, CacheManager
 from acc.io import IOWriter
 
 
@@ -18,33 +18,11 @@ def test_cache_entry():
     print("  PASS")
 
 
-def test_cache_entry_from_obj():
-    print("Test: CacheEntry.from_obj")
-    t = torch.randn(2, 3)
-    entry = CacheEntry.from_obj(t)
-    assert entry.type == "tensor"
-    assert entry.shape == [2, 3]
-    storage = _extract_storage(t)
-    assert entry.cache_id == _compute_hash(storage)
-    print("  PASS")
-
-
-def test_cache_entry_to_obj():
-    print("Test: CacheEntry.to_obj")
-    t = torch.tensor([1.0, 2.0, 3.0])
-    entry = CacheEntry.from_obj(t)
-    storage = _extract_storage(t)
-    restored = entry.to_obj(storage)
-    assert isinstance(restored, torch.Tensor)
-    assert torch.equal(restored, t)
-    print("  PASS")
-
-
 def test_save_tensor():
     print("Test: save with tensor")
     with tempfile.TemporaryDirectory() as tmpdir:
-        io_writer = IOWriter(enable_async=False)
-        mgr = CacheManager(tmpdir, io_writer)
+        io_writer = IOWriter(name="cache", enable_async=False)
+        mgr = CacheManager(tmpdir, cache_io=io_writer)
         t = torch.randn(2, 3)
         result = mgr.save(t)
         assert isinstance(result, CacheEntry)
@@ -59,8 +37,8 @@ def test_save_tensor():
 def test_save_numpy():
     print("Test: save with numpy")
     with tempfile.TemporaryDirectory() as tmpdir:
-        io_writer = IOWriter(enable_async=False)
-        mgr = CacheManager(tmpdir, io_writer)
+        io_writer = IOWriter(name="cache", enable_async=False)
+        mgr = CacheManager(tmpdir, cache_io=io_writer)
         a = np.random.randn(3, 4).astype(np.float32)
         result = mgr.save(a)
         assert isinstance(result, CacheEntry)
@@ -73,8 +51,8 @@ def test_save_numpy():
 def test_save_scalar():
     print("Test: save with non-tensor/numpy")
     with tempfile.TemporaryDirectory() as tmpdir:
-        io_writer = IOWriter(enable_async=False)
-        mgr = CacheManager(tmpdir, io_writer)
+        io_writer = IOWriter(name="cache", enable_async=False)
+        mgr = CacheManager(tmpdir, cache_io=io_writer)
         assert mgr.save(42) == 42
         assert mgr.save(3.14) == 3.14
         assert mgr.save("hello") == "hello"
@@ -85,8 +63,8 @@ def test_save_scalar():
 def test_load_tensor():
     print("Test: load tensor from CacheEntry")
     with tempfile.TemporaryDirectory() as tmpdir:
-        io_writer = IOWriter(enable_async=False)
-        mgr = CacheManager(tmpdir, io_writer)
+        io_writer = IOWriter(name="cache", enable_async=False)
+        mgr = CacheManager(tmpdir, cache_io=io_writer)
         t = torch.tensor([1.0, 2.0, 3.0])
         entry = mgr.save(t)
         restored = mgr.load(entry)
@@ -98,8 +76,8 @@ def test_load_tensor():
 def test_load_numpy():
     print("Test: load numpy from CacheEntry")
     with tempfile.TemporaryDirectory() as tmpdir:
-        io_writer = IOWriter(enable_async=False)
-        mgr = CacheManager(tmpdir, io_writer)
+        io_writer = IOWriter(name="cache", enable_async=False)
+        mgr = CacheManager(tmpdir, cache_io=io_writer)
         a = np.array([1.0, 2.0, 3.0], dtype=np.float32)
         entry = mgr.save(a)
         restored = mgr.load(entry)
@@ -111,8 +89,8 @@ def test_load_numpy():
 def test_bfloat16_tensor():
     print("Test: BFloat16 tensor save/load")
     with tempfile.TemporaryDirectory() as tmpdir:
-        io_writer = IOWriter(enable_async=False)
-        mgr = CacheManager(tmpdir, io_writer)
+        io_writer = IOWriter(name="cache", enable_async=False)
+        mgr = CacheManager(tmpdir, cache_io=io_writer)
         t = torch.tensor([1.0, 2.0, 3.0], dtype=torch.bfloat16)
         entry = mgr.save(t)
         restored = mgr.load(entry)
@@ -125,8 +103,8 @@ def test_bfloat16_tensor():
 def test_save_load_nested():
     print("Test: save/load nested structure")
     with tempfile.TemporaryDirectory() as tmpdir:
-        io_writer = IOWriter(enable_async=False)
-        mgr = CacheManager(tmpdir, io_writer)
+        io_writer = IOWriter(name="cache", enable_async=False)
+        mgr = CacheManager(tmpdir, cache_io=io_writer)
         t1 = torch.randn(2, 2)
         t2 = torch.randn(3, 3)
         data = {'tensors': [t1, t2], 'value': 42, 'name': 'test'}
@@ -147,8 +125,8 @@ def test_save_load_nested():
 def test_different_tensors_different_hash():
     print("Test: different tensors get different cache_ids")
     with tempfile.TemporaryDirectory() as tmpdir:
-        io_writer = IOWriter(enable_async=False)
-        mgr = CacheManager(tmpdir, io_writer)
+        io_writer = IOWriter(name="cache", enable_async=False)
+        mgr = CacheManager(tmpdir, cache_io=io_writer)
         t1 = torch.ones(2, 3)
         t2 = torch.zeros(2, 3)
         e1 = mgr.save(t1)
@@ -157,24 +135,11 @@ def test_different_tensors_different_hash():
     print("  PASS")
 
 
-def test_identical_tensors_same_hash():
-    print("Test: identical content yields same cache_id (strict mode)")
-    with tempfile.TemporaryDirectory() as tmpdir:
-        io_writer = IOWriter(enable_async=False)
-        mgr = CacheManager(tmpdir, io_writer, mode='strict')
-        t1 = torch.tensor([1.0, 2.0])
-        t2 = torch.tensor([1.0, 2.0])
-        e1 = mgr.save(t1)
-        e2 = mgr.save(t2)
-        assert e1.cache_id == e2.cache_id
-    print("  PASS")
-
-
 def test_same_storage_different_shape():
     print("Test: same storage but different shape")
     with tempfile.TemporaryDirectory() as tmpdir:
-        io_writer = IOWriter(enable_async=False)
-        mgr = CacheManager(tmpdir, io_writer)
+        io_writer = IOWriter(name="cache", enable_async=False)
+        mgr = CacheManager(tmpdir, cache_io=io_writer)
         t1 = torch.arange(6)  # shape [6]
         t2 = t1.reshape(2, 3)  # shape [2, 3], same storage
         e1 = mgr.save(t1)
@@ -194,8 +159,6 @@ def test_same_storage_different_shape():
 def main():
     print("ACC - CacheManager Unit Tests\n")
     test_cache_entry()
-    test_cache_entry_from_obj()
-    test_cache_entry_to_obj()
     test_save_tensor()
     test_save_numpy()
     test_save_scalar()
@@ -204,7 +167,6 @@ def main():
     test_bfloat16_tensor()
     test_save_load_nested()
     test_different_tensors_different_hash()
-    test_identical_tensors_same_hash()
     test_same_storage_different_shape()
     print("\nAll cache tests passed.")
 

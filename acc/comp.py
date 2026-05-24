@@ -8,7 +8,7 @@ import json
 import os
 import time
 from typing import List, Tuple
-from .serialization import SerializationSession
+from .serialization import SerializationManager
 from .formatting import (
     format_signature,
     format_display_key,
@@ -53,7 +53,7 @@ def _load_all_metadata(dump_dir: str) -> list:
         if filename.endswith('.json'):
             json_path = os.path.join(dump_dir, filename)
             try:
-                record = SerializationSession.load_metadata(json_path)
+                record = SerializationManager.load_metadata(json_path)
                 records.append(record)
             except (json.JSONDecodeError, FileNotFoundError) as e:
                 print(f"[COMP WARN] Failed to load metadata {filename}: {e}")
@@ -141,8 +141,8 @@ def _compare_matched_pairs(records_a: list, records_b: list, matched_pairs, stor
         session_dir_b = os.path.dirname(storage_b)
         pkl_path_a = os.path.join(session_dir_a, filename_a.replace('.json', '.pkl'))
         pkl_path_b = os.path.join(session_dir_b, filename_b.replace('.json', '.pkl'))
-        inputs_a, outputs_a = SerializationSession.load_data(pkl_path_a, storage_a)
-        inputs_b, outputs_b = SerializationSession.load_data(pkl_path_b, storage_b)
+        inputs_a, outputs_a = SerializationManager.load_data(pkl_path_a, storage_a)
+        inputs_b, outputs_b = SerializationManager.load_data(pkl_path_b, storage_b)
         _compare_lists(inputs_a['args'], inputs_b['args'], "Inputs.args")
         _compare_kwargs(inputs_a['kwargs'], inputs_b['kwargs'], "Inputs.kwargs")
         _compare_lists(outputs_a, outputs_b, "Outputs")

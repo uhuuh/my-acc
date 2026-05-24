@@ -10,7 +10,7 @@ import torch
 import tempfile
 import json
 import pickle
-from acc import ops_dump, ops_comp, SerializationSession
+from acc import ops_dump, ops_comp
 from acc.cache import CacheEntry, CacheManager
 from acc.io import IOWriter
 
@@ -59,8 +59,7 @@ def test_saves_operator_outputs():
                     assert len(outputs) > 0, "Outputs should not be empty"
                     # Outputs may be CacheEntry objects, resolve them
                     storage_dir = os.path.join(session_dir, 'storage')
-                    io_writer = IOWriter(enable_async=False)
-                    cache_mgr = CacheManager(storage_dir, io_writer=io_writer)
+                    cache_mgr = CacheManager(storage_dir, cache_io=IOWriter(enable_async=False))
                     resolved_outputs = [cache_mgr.load(o) if isinstance(o, CacheEntry) else o for o in outputs]
                     assert isinstance(resolved_outputs[0], torch.Tensor), "Output should be a tensor"
                     print(f"Resolved output tensor shape: {resolved_outputs[0].shape}")

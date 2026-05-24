@@ -2,28 +2,17 @@
 Operator Dumper for PyTorch Operator Dump Tool.
 
 Provides ops_dump context manager for capturing operator calls.
-Environment variable ACC_DUMP_ENABLED controls global dump behavior:
-- Not set or "1"/"true": dump enabled (default)
-- "0"/"false": dump disabled
+Uses a two-process pipeline: SerializationSender (main) + SerializationReceiver (subprocess).
 """
 
-import os
 import torch
 from torch.utils._python_dispatch import TorchDispatchMode
-from .serialization import SerializationSession
+from . import config
+from .serialization import create_pipeline
 
 
-# Module-level reference for impl patch to access active session
 _active_session = None
 
-
-# ============================================================
-# Patch torch.library.impl — wrap impls with a nested
-# TorchDispatchMode so internal operator calls are captured.
-# This is needed because TorchDispatchMode is temporarily
-# disabled while inside __torch_dispatch__, so the outer
-# ops_dump cannot see dispatches from within a kernel.
-# ============================================================
 
 _original_impl = None
 _patch_installed = False
@@ -48,7 +37,6 @@ def _install_impl_patch():
                     return f(*args, **kwargs)
             return wrapped
 
-        # torch.library.impl(f) 直接注册 vs @impl 装饰器语法
         if func is None:
             def decorator(f):
                 return _original_impl(qualname, types, wrap(f), lib=lib)
@@ -59,13 +47,8 @@ def _install_impl_patch():
     torch.library.impl = patched_impl
 
 
-# Install patch on import
 _install_impl_patch()
 
-
-# ============================================================
-# ops_dump context manager (entry point)
-# ============================================================
 
 class ops_dump(TorchDispatchMode):
     """
@@ -76,41 +59,43 @@ class ops_dump(TorchDispatchMode):
             model(input)
     """
 
-    def __init__(self, dump_path: str = None):
-        self.enabled = os.environ.get('ACC_DUMP_ENABLED', '1').lower() not in ('0', 'false', 'no', 'off')
+    def __init__(self, dump_path: str = None, max_tensor_size_mb: int = None):
+        config.init(dump_path=dump_path, max_tensor_size_mb=max_tensor_size_mb)
+        self.enabled = config.get_dump_enabled()
         self._in_dispatch = False
+        self._sender = None
+        self._dump_path = dump_path
         if not self.enabled:
             self._owns_session = False
             return
         self._owns_session = _active_session is None
-        self.session = SerializationSession(dump_path) if self._owns_session else _active_session
-
-    @property
-    def max_tensor_size_mb(self):
-        return self.session.max_tensor_size_mb if self.enabled else 10240
 
     def __enter__(self):
         global _active_session
         if self._owns_session and self.enabled:
-            self.session.start()
-            _active_session = self.session
+            self._sender = create_pipeline(self._dump_path)
+            _active_session = self._sender
         return super().__enter__()
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         global _active_session
         if self._owns_session and self.enabled:
-            self.session.end()
+            self._sender.stop()
             _active_session = None
         return super().__exit__(exc_type, exc_val, exc_tb)
 
     def __torch_dispatch__(self, func, types, args=(), kwargs=None):
+        global _active_session
         if not self.enabled or self._in_dispatch:
+            return func(*args, **(kwargs or {}))
+        sender = self._sender if self._owns_session else _active_session
+        if sender is None:
             return func(*args, **(kwargs or {}))
         kwargs = kwargs or {}
         result = func(*args, **kwargs)
         self._in_dispatch = True
         try:
-            self.session.save_operation(str(func), args, kwargs, result)
+            sender.save_operation(str(func), args, kwargs, result)
         finally:
             self._in_dispatch = False
         return result
