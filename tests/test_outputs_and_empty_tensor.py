@@ -13,6 +13,7 @@ import pickle
 from acc import ops_dump, ops_comp
 from acc.cache import CacheEntry, CacheManager
 from acc.io import IOWriter
+from acc.memory import PinMemoryAllocator
 
 
 def test_saves_operator_outputs():
@@ -58,8 +59,13 @@ def test_saves_operator_outputs():
                     print(f"Outputs found: {outputs}")
                     assert len(outputs) > 0, "Outputs should not be empty"
                     # Outputs may be CacheEntry objects, resolve them
-                    storage_dir = os.path.join(session_dir, 'storage')
-                    cache_mgr = CacheManager(storage_dir, cache_io=IOWriter(enable_async=False))
+                    cache_dir = os.path.join(session_dir, 'cache')
+                    cache_mgr = CacheManager()
+                    cache_mgr.cache_dir = cache_dir
+                    cache_mgr._io = IOWriter(enable_async=False)
+                    cache_mgr._pool = PinMemoryAllocator.create("advanced")
+                    cache_mgr._load_cached = {}
+                    cache_mgr._started = True
                     resolved_outputs = [cache_mgr.load(o) if isinstance(o, CacheEntry) else o for o in outputs]
                     assert isinstance(resolved_outputs[0], torch.Tensor), "Output should be a tensor"
                     print(f"Resolved output tensor shape: {resolved_outputs[0].shape}")

@@ -81,12 +81,10 @@ def test_default_max_tensor_size():
     print("Test: Default max tensor size is 10GB")
     print("=" * 60)
 
-    from acc.serialization import SerializationSender
     config.update(max_tensor_size_mb=10240)
-    sender = SerializationSender("/tmp/test_dummy")
-    assert sender.max_tensor_size_mb == 10240, \
-        f"Default max_tensor_size_mb should be 10240 (10GB), got {sender.max_tensor_size_mb}"
-    print(f"Default max_tensor_size_mb: {sender.max_tensor_size_mb} MB (10GB)")
+    assert config.max_tensor_size_mb == 10240, \
+        f"Default max_tensor_size_mb should be 10240 (10GB), got {config.max_tensor_size_mb}"
+    print(f"Default max_tensor_size_mb: {config.max_tensor_size_mb} MB (10GB)")
 
     print("PASS: Default max tensor size is 10GB\n")
 

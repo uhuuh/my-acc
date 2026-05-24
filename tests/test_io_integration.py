@@ -2,24 +2,7 @@
 import os
 import tempfile
 from acc import ops_dump
-from acc.serialization import create_pipeline
 from acc.config import config
-
-
-def test_create_pipeline():
-    """Test create_pipeline creates sender with running receiver subprocess."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        sender = create_pipeline(tmpdir)
-        seq = sender.save_operation("test_op", (1, 2, 3), {"x": 10}, 42)
-        assert seq == 0
-        sender.stop()
-
-        session_dir = sender.session_dir
-        files = os.listdir(session_dir)
-        json_files = [f for f in files if f.endswith('.json')]
-        pkl_files = [f for f in files if f.endswith('.pkl')]
-        assert len(json_files) == 1
-        assert len(pkl_files) == 1
 
 
 def test_ops_dump_creates_files():

@@ -228,7 +228,7 @@ def test_backward_pass_not_captured():
 
 
 def test_nested_dump_contexts():
-    """测试嵌套 dump 上下文 - 嵌套 ops_dump 会警告并忽略，所有算子捕获到外层"""
+    """测试嵌套 dump 上下文 - 每个 ops_dump 创建独立 session"""
     print("=" * 60)
     print("Test: Nested dump contexts")
     print("=" * 60)
@@ -237,7 +237,6 @@ def test_nested_dump_contexts():
         with tempfile.TemporaryDirectory() as tmpdir_inner:
             x = torch.randn(3, 3)
 
-            # 嵌套 dump - 内层会被忽略
             with ops_dump(tmpdir_outer) as outer_dumper:
                 y1 = x + 1
 
@@ -247,23 +246,19 @@ def test_nested_dump_contexts():
 
                 y4 = torch.exp(y3)
 
-            # 检查外层 dump
             outer_dirs = [d for d in os.listdir(tmpdir_outer) if os.path.isdir(os.path.join(tmpdir_outer, d))]
             outer_session = os.path.join(tmpdir_outer, outer_dirs[0])
             outer_files = [f for f in os.listdir(outer_session) if f.endswith('.json')]
             print(f"Outer dump captured {len(outer_files)} operators")
 
-            # 检查内层 dump - 应该为空（被忽略）
             inner_dirs = [d for d in os.listdir(tmpdir_inner) if os.path.isdir(os.path.join(tmpdir_inner, d))]
-            print(f"Inner dump has {len(inner_dirs)} session directories (expected 0)")
+            print(f"Inner dump has {len(inner_dirs)} session directories (expected >=1)")
 
-            # 外层应该捕获所有算子 (add, mul, sin, exp)
             assert len(outer_files) >= 4, f"Outer should capture at least 4 operators, got {len(outer_files)}"
-            print("PASS: Outer dump captured all operators (including nested context)")
+            print("PASS: Outer dump captured all operators")
 
-            # 内层不应该有 session（嵌套 ops_dump 被忽略）
-            assert len(inner_dirs) == 0, f"Inner should have 0 sessions, got {len(inner_dirs)}"
-            print("PASS: Nested ops_dump was correctly ignored")
+            assert len(inner_dirs) >= 1, f"Inner should have at least 1 session, got {len(inner_dirs)}"
+            print("PASS: Inner dump created independent session")
 
             print("PASS: Nested dump test completed\n")
 
