@@ -63,27 +63,49 @@ class FileHandler:
 
 
 class IOWriter:
-    """IO Writer with a background thread for async file writes."""
-
-    def __init__(self, name: str = "", enable_async: bool = True, monitor_interval: float = 5.0):
+    def __init__(self, name: str = "", enable_async: bool = None):
         self.name = name
+        if enable_async is None:
+            from .config import config
+            enable_async = config.async_io
         self.enable_async = enable_async
-        self._pending_files: Set[str] = set()
-        self._monitor_interval = monitor_interval
+        self._pending_files = set()
         self._bytes_written = 0
-        self._last_monitor_time = time.time()
+        self._last_monitor_time = 0.0
         self._handler = FileHandler()
-
+        self._thread = None
         if enable_async:
-            self._queue: queue.Queue = queue.Queue()
+            self._queue = queue.Queue()
+
+    def start(self):
+        if self.enable_async:
+            self._last_monitor_time = time.time()
             self._thread = threading.Thread(target=self._worker, daemon=True)
             self._thread.start()
-        else:
-            self._thread = None
 
-    @property
-    def handler(self) -> FileHandler:
-        return self._handler
+    def stop(self):
+        if not self.enable_async:
+            return
+        self._queue.put(None)
+        while True:
+            pending = len(self._pending_files)
+            if pending == 0:
+                break
+            print(f"[IO] Remaining: {pending} files")
+            time.sleep(1)
+        self._thread.join()
+        self._thread = None
+
+    def save(self, file_path, content):
+        if self.enable_async:
+            self._pending_files.add(file_path)
+            self._queue.put((file_path, content))
+        else:
+            self._handler.write(file_path, content)
+            self._bytes_written += os.path.getsize(file_path)
+
+    def load(self, file_path):
+        return self._handler.read(file_path)
 
     def _worker(self):
         while True:
@@ -102,31 +124,11 @@ class IOWriter:
                 self._pending_files.discard(file_path)
                 self._queue.task_done()
 
-    def wait_complete(self, timeout: float = 1.0):
-        if not self.enable_async:
-            print("[IO] All writes completed")
-            return
-        self._queue.put(None)
-        while self._thread.is_alive():
-            self._thread.join(timeout=timeout)
-            print(f"[IO] Waited {timeout}s for worker thread")
-        print("[IO] All writes completed")
-
-    def write(self, file_path: str, content):
-        if self.enable_async:
-            self._pending_files.add(file_path)
-            self._queue.put((file_path, content))
-        else:
-            self._handler.write(file_path, content)
-            self._bytes_written += os.path.getsize(file_path)
-
-    def read(self, file_path: str):
-        return self._handler.read(file_path)
-
     def _check_monitor(self):
+        from .config import config
         now = time.time()
         elapsed = now - self._last_monitor_time
-        if elapsed >= self._monitor_interval:
+        if elapsed >= config.io_monitor_interval:
             pending_count = len(self._pending_files)
             throughput = self._bytes_written / elapsed if elapsed > 0 else 0
             throughput_str = self._format_bytes(throughput)
@@ -134,7 +136,7 @@ class IOWriter:
             self._bytes_written = 0
             self._last_monitor_time = now
 
-    def _format_bytes(self, bytes_per_sec: float) -> str:
+    def _format_bytes(self, bytes_per_sec):
         units = ['B', 'KB', 'MB', 'GB']
         value = bytes_per_sec
         unit_idx = 0
