@@ -8,7 +8,6 @@ import os
 import pickle
 import queue
 import time
-import atexit
 import torch
 import threading
 from typing import Dict, Tuple, Callable
@@ -82,14 +81,11 @@ class IOWriter:
             self._queue = queue.Queue()
 
     def start(self):
-        from .config import config
         print(f"[IO] {self.name} started" + (" (async)" if self.enable_async else " (sync)"))
         if self.enable_async:
             self._last_monitor_time = time.time()
             self._thread = threading.Thread(target=self._worker, daemon=True)
             self._thread.start()
-            if config.io_flush_mode == "atexit":
-                atexit.register(self._atexit_flush)
 
     def stop(self):
         if not self.enable_async:
@@ -97,17 +93,8 @@ class IOWriter:
             return
         self._queue.put(None)
         self._stopped = True
-        from .config import config
-        if config.io_flush_mode == "stop":
-            self._flush()
-        print(f"[IO] {self.name} stopped")
-
-    def _atexit_flush(self):
-        if not self.enable_async:
-            return
-        if not self._stopped:
-            self._queue.put(None)
         self._flush()
+        print(f"[IO] {self.name} stopped")
 
     def _flush(self):
         while True:
