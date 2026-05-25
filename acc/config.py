@@ -12,7 +12,6 @@ class Config:
     pool_monitor_interval: float = 5.0
     async_io: bool = True
     async_serialization: bool = True
-    # io_flush_mode removed - always use stop mode
 
     def __post_init__(self):
         annotations = type(self).__annotations__
