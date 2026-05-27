@@ -7,7 +7,7 @@ import torch
 import numpy as np
 from acc.cache import CacheEntry, CacheManager
 from acc.io import IOWriter
-from acc.memory import PinMemoryAllocator
+from acc.memory import MemoryAllocator
 
 
 def test_cache_entry():
@@ -28,7 +28,7 @@ def test_save_tensor():
         mgr.cache_dir = cache_dir
         mgr._io = IOWriter(enable_async=False)
         mgr._started = True
-        mgr._pool = PinMemoryAllocator.create("advanced")
+        mgr._pool = MemoryAllocator.create("pin")
         mgr._max_tensor_size_mb = 10240
         mgr._save_cached = set()
         mgr._load_cached = {}
@@ -52,7 +52,7 @@ def test_save_numpy():
         mgr.cache_dir = cache_dir
         mgr._io = IOWriter(enable_async=False)
         mgr._started = True
-        mgr._pool = PinMemoryAllocator.create("advanced")
+        mgr._pool = MemoryAllocator.create("pin")
         mgr._max_tensor_size_mb = 10240
         mgr._save_cached = set()
         mgr._load_cached = {}
@@ -74,7 +74,7 @@ def test_save_scalar():
         mgr.cache_dir = cache_dir
         mgr._io = IOWriter(enable_async=False)
         mgr._started = True
-        mgr._pool = PinMemoryAllocator.create("advanced")
+        mgr._pool = MemoryAllocator.create("pin")
         mgr._max_tensor_size_mb = 10240
         mgr._save_cached = set()
         mgr._load_cached = {}
@@ -94,7 +94,7 @@ def test_load_tensor():
         mgr.cache_dir = cache_dir
         mgr._io = IOWriter(enable_async=False)
         mgr._started = True
-        mgr._pool = PinMemoryAllocator.create("advanced")
+        mgr._pool = MemoryAllocator.create("pin")
         mgr._max_tensor_size_mb = 10240
         mgr._save_cached = set()
         mgr._load_cached = {}
@@ -115,7 +115,7 @@ def test_load_numpy():
         mgr.cache_dir = cache_dir
         mgr._io = IOWriter(enable_async=False)
         mgr._started = True
-        mgr._pool = PinMemoryAllocator.create("advanced")
+        mgr._pool = MemoryAllocator.create("pin")
         mgr._max_tensor_size_mb = 10240
         mgr._save_cached = set()
         mgr._load_cached = {}
@@ -136,7 +136,7 @@ def test_bfloat16_tensor():
         mgr.cache_dir = cache_dir
         mgr._io = IOWriter(enable_async=False)
         mgr._started = True
-        mgr._pool = PinMemoryAllocator.create("advanced")
+        mgr._pool = MemoryAllocator.create("pin")
         mgr._max_tensor_size_mb = 10240
         mgr._save_cached = set()
         mgr._load_cached = {}
@@ -158,7 +158,7 @@ def test_save_load_nested():
         mgr.cache_dir = cache_dir
         mgr._io = IOWriter(enable_async=False)
         mgr._started = True
-        mgr._pool = PinMemoryAllocator.create("advanced")
+        mgr._pool = MemoryAllocator.create("pin")
         mgr._max_tensor_size_mb = 10240
         mgr._save_cached = set()
         mgr._load_cached = {}
@@ -188,7 +188,7 @@ def test_different_tensors_different_hash():
         mgr.cache_dir = cache_dir
         mgr._io = IOWriter(enable_async=False)
         mgr._started = True
-        mgr._pool = PinMemoryAllocator.create("advanced")
+        mgr._pool = MemoryAllocator.create("pin")
         mgr._max_tensor_size_mb = 10240
         mgr._save_cached = set()
         mgr._load_cached = {}
@@ -209,7 +209,7 @@ def test_same_storage_different_shape():
         mgr.cache_dir = cache_dir
         mgr._io = IOWriter(enable_async=False)
         mgr._started = True
-        mgr._pool = PinMemoryAllocator.create("advanced")
+        mgr._pool = MemoryAllocator.create("pin")
         mgr._max_tensor_size_mb = 10240
         mgr._save_cached = set()
         mgr._load_cached = {}

@@ -13,7 +13,7 @@ import pickle
 from acc import ops_dump, ops_comp
 from acc.cache import CacheEntry, CacheManager
 from acc.io import IOWriter
-from acc.memory import PinMemoryAllocator
+from acc.memory import MemoryAllocator
 
 
 def test_saves_operator_outputs():
@@ -63,7 +63,7 @@ def test_saves_operator_outputs():
                     cache_mgr = CacheManager()
                     cache_mgr.cache_dir = cache_dir
                     cache_mgr._io = IOWriter(enable_async=False)
-                    cache_mgr._pool = PinMemoryAllocator.create("advanced")
+                    cache_mgr._pool = MemoryAllocator.create("pin")
                     cache_mgr._load_cached = {}
                     cache_mgr._started = True
                     resolved_outputs = [cache_mgr.load(o) if isinstance(o, CacheEntry) else o for o in outputs]
