@@ -5,16 +5,16 @@ import numpy as np
 import torch
 
 
-class PinMemoryAllocator:
-    """Base allocator: acquire(size)→tensor, release(block)→void."""
+class MemoryAllocator:
+    """Base allocator: acquire(tensor)→empty CPU tensor, release(block)→void."""
 
     @classmethod
-    def create(cls, kind: str = "advanced") -> 'PinMemoryAllocator':
-        if kind == "advanced":
-            return AdvancedAllocator()
-        return NaiveAllocator()
+    def create(cls, kind: str = "native") -> 'MemoryAllocator':
+        if kind == "pin":
+            return PinMemoryAllocator()
+        return NativeMemoryAllocator()
 
-    def acquire(self, size: int) -> torch.Tensor:
+    def acquire(self, tensor: torch.Tensor) -> torch.Tensor:
         raise NotImplementedError
 
     def release(self, block: torch.Tensor) -> None:
