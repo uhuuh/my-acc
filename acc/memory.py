@@ -34,8 +34,8 @@ class NativeMemoryAllocator(MemoryAllocator):
         del block
 
 
-class AdvancedAllocator(PinMemoryAllocator):
-    """Power-of-2 size-class free-list allocator with view-based splitting."""
+class PinMemoryAllocator(MemoryAllocator):
+    """Power-of-2 byte-based free-list allocator with view-based splitting."""
 
     def __init__(self):
         self._free: list[list[torch.Tensor]] = []
@@ -44,34 +44,7 @@ class AdvancedAllocator(PinMemoryAllocator):
         self._pool_bytes_delta = 0
         self._acquire_total = 0
         self._acquire_hits = 0
-        self._start_time = 0.0
         self._last_monitor_time = 0.0
-
-    def _check_monitor(self):
-        from .config import config
-        now = time.time()
-        elapsed = now - self._last_monitor_time
-        if elapsed < config.pool_monitor_interval:
-            return
-        free = sum(len(bucket) for bucket in self._free)
-        used = len(self._allocated)
-        used_bytes = sum(self._block_bytes(b) for b in self._allocated.values())
-        total_bytes = self._pool_bytes + used_bytes
-        ratio = (self._acquire_hits / self._acquire_total * 100) if self._acquire_total > 0 else 0
-        print(f"[POOL MONITOR] interval={elapsed:.1f}s total={now - self._start_time:.1f}s: "
-              f"Blocks: {free + used} ({used} in use) | "
-              f"Acquires: {self._acquire_total} ({self._acquire_hits} hits, {ratio:.1f}%) | "
-              f"Memory: {self._format_bytes(total_bytes)} ({self._format_bytes(self._pool_bytes)} free)")
-        self._last_monitor_time = now
-
-    def _format_bytes(self, n):
-        units = ['B', 'KB', 'MB', 'GB']
-        value = float(n)
-        unit_idx = 0
-        while value >= 1024 and unit_idx < len(units) - 1:
-            value /= 1024
-            unit_idx += 1
-        return f"{value:,.2f} {units[unit_idx]}"
 
     def _block_bytes(self, block):
         return block.numel() * block.element_size()
@@ -93,13 +66,14 @@ class AdvancedAllocator(PinMemoryAllocator):
                 return self._free[i].pop()
         return None
 
-    def acquire(self, size: int) -> torch.Tensor:
+    def acquire(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Allocate CPU tensor matching input's shape/dtype, no data copy."""
         self._acquire_total += 1
-        if self._start_time == 0.0:
-            self._start_time = time.time()
-            self._last_monitor_time = self._start_time
-        aligned = self._next_pow2(size)
-        start_idx = aligned.bit_length() - 1
+
+        # Calculate bytes needed for this tensor
+        bytes_needed = tensor.numel() * tensor.element_size()
+        aligned_bytes = self._next_pow2(bytes_needed)
+        start_idx = aligned_bytes.bit_length() - 1
 
         block = self._find_free(start_idx)
         if block is not None:
@@ -108,11 +82,15 @@ class AdvancedAllocator(PinMemoryAllocator):
             self._pool_bytes -= b
             self._pool_bytes_delta -= b
         else:
-            block = torch.empty(aligned, pin_memory=True)
+            # Allocate new block with same dtype as tensor
+            block_elements = aligned_bytes // tensor.element_size()
+            block = torch.empty(block_elements, dtype=tensor.dtype, pin_memory=True)
 
         self._allocated[block.untyped_storage().data_ptr()] = block
         self._check_monitor()
-        return block[:size]
+
+        # Return view matching original shape
+        return block[:tensor.numel()].reshape(tensor.shape)
 
     def release(self, block: torch.Tensor) -> None:
         key = block.untyped_storage().data_ptr()
@@ -128,13 +106,41 @@ class AdvancedAllocator(PinMemoryAllocator):
         n = flat.numel()
         if n == 0:
             return
-        aligned = self._next_pow2(n)
-        idx = aligned.bit_length() - 1
+        b = self._block_bytes(flat)
+        aligned_bytes = self._next_pow2(b)
+        idx = aligned_bytes.bit_length() - 1
         self._ensure_bucket(idx)
         self._free[idx].append(flat)
-        b = self._block_bytes(flat)
         self._pool_bytes += b
         self._pool_bytes_delta += b
+
+    def _check_monitor(self):
+        from .config import config
+        now = time.time()
+        # Skip first call (no elapsed time yet)
+        if self._acquire_total == 1:
+            return
+        elapsed = now - self._last_monitor_time if hasattr(self, '_last_monitor_time') else 0
+        if elapsed < config.pool_monitor_interval:
+            return
+        free = sum(len(bucket) for bucket in self._free)
+        used = len(self._allocated)
+        used_bytes = sum(self._block_bytes(b) for b in self._allocated.values())
+        total_bytes = self._pool_bytes + used_bytes
+        ratio = (self._acquire_hits / self._acquire_total * 100) if self._acquire_total > 0 else 0
+        print(f"[POOL MONITOR] Blocks: {free + used} ({used} in use) | "
+              f"Acquires: {self._acquire_total} ({self._acquire_hits} hits, {ratio:.1f}%) | "
+              f"Memory: {self._format_bytes(total_bytes)} ({self._format_bytes(self._pool_bytes)} free)")
+        self._last_monitor_time = now
+
+    def _format_bytes(self, n):
+        units = ['B', 'KB', 'MB', 'GB']
+        value = float(n)
+        unit_idx = 0
+        while value >= 1024 and unit_idx < len(units) - 1:
+            value /= 1024
+            unit_idx += 1
+        return f"{value:,.2f} {units[unit_idx]}"
 
     def pool_stats(self):
         delta = self._pool_bytes_delta
@@ -153,13 +159,12 @@ class Storage:
             t = obj.detach().contiguous()
         self.cache_id: str = f"ptr_{t.data_ptr()}_{t.numel()}_{t._version}"
 
-    def materialize(self, allocator: PinMemoryAllocator) -> torch.Tensor:
+    def materialize(self, allocator: MemoryAllocator) -> torch.Tensor:
         """Acquire pinned memory, copy tensor to CPU, return storage tensor."""
         if isinstance(self._obj, np.ndarray):
             flat = torch.from_numpy(self._obj).contiguous()
         else:
             flat = self._obj.detach().contiguous()
-        storage = allocator.acquire(flat.numel())
-        storage = storage.reshape(flat.shape)
+        storage = allocator.acquire(flat)
         storage.copy_(flat)
         return storage
