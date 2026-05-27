@@ -6,7 +6,11 @@ import torch
 
 
 class MemoryAllocator:
-    """Base allocator: acquire(tensor)→empty CPU tensor, release(block)→void."""
+    """Base allocator with monitoring support."""
+
+    def __init__(self):
+        self._acquire_total = 0
+        self._last_monitor_time = 0.0
 
     @classmethod
     def create(cls, kind: str = "native") -> 'MemoryAllocator':
@@ -23,26 +27,8 @@ class MemoryAllocator:
     def pool_stats(self):
         return None
 
-
-class NativeMemoryAllocator(MemoryAllocator):
-    """Simple allocation without pool or pin memory."""
-
-    def __init__(self):
-        self._acquire_total = 0
-        self._allocated_bytes = 0
-        self._last_monitor_time = 0.0
-
-    def acquire(self, tensor: torch.Tensor) -> torch.Tensor:
-        self._acquire_total += 1
-        block = torch.empty_like(tensor).cpu()
-        self._allocated_bytes += block.numel() * block.element_size()
-        self._check_monitor()
-        return block
-
-    def release(self, block: torch.Tensor) -> None:
-        del block
-
     def _check_monitor(self):
+        """Check and print monitoring info. Subclasses override _monitor_message()."""
         from .config import config
         now = time.time()
         if self._acquire_total == 1:
@@ -50,9 +36,12 @@ class NativeMemoryAllocator(MemoryAllocator):
         elapsed = now - self._last_monitor_time
         if elapsed < config.pool_monitor_interval:
             return
-        print(f"[ALLOC MONITOR] Allocations: {self._acquire_total} | "
-              f"Memory: {self._format_bytes(self._allocated_bytes)}")
+        print(self._monitor_message())
         self._last_monitor_time = now
+
+    def _monitor_message(self) -> str:
+        """Return monitoring message. Subclasses override this."""
+        raise NotImplementedError
 
     def _format_bytes(self, n):
         units = ['B', 'KB', 'MB', 'GB']
@@ -64,17 +53,37 @@ class NativeMemoryAllocator(MemoryAllocator):
         return f"{value:,.2f} {units[unit_idx]}"
 
 
+class NativeMemoryAllocator(MemoryAllocator):
+    """Simple allocation without pool or pin memory."""
+
+    def __init__(self):
+        super().__init__()
+        self._allocated_bytes = 0
+
+    def acquire(self, tensor: torch.Tensor) -> torch.Tensor:
+        self._acquire_total += 1
+        block = torch.empty_like(tensor).cpu()
+        self._allocated_bytes += block.numel() * block.element_size()
+        self._check_monitor()
+        return block
+
+    def release(self, block: torch.Tensor) -> None:
+        del block
+
+    def _monitor_message(self) -> str:
+        return f"[ALLOC MONITOR] Allocations: {self._acquire_total} | Memory: {self._format_bytes(self._allocated_bytes)}"
+
+
 class PinMemoryAllocator(MemoryAllocator):
     """Power-of-2 byte-based free-list allocator with view-based splitting."""
 
     def __init__(self):
+        super().__init__()
         self._free: list[list[torch.Tensor]] = []
         self._allocated: dict[int, torch.Tensor] = {}
         self._pool_bytes = 0
         self._pool_bytes_delta = 0
-        self._acquire_total = 0
         self._acquire_hits = 0
-        self._last_monitor_time = 0.0
 
     def _block_bytes(self, block):
         return block.numel() * block.element_size()
@@ -144,33 +153,15 @@ class PinMemoryAllocator(MemoryAllocator):
         self._pool_bytes += b
         self._pool_bytes_delta += b
 
-    def _check_monitor(self):
-        from .config import config
-        now = time.time()
-        # Skip first call (no elapsed time yet)
-        if self._acquire_total == 1:
-            return
-        elapsed = now - self._last_monitor_time if hasattr(self, '_last_monitor_time') else 0
-        if elapsed < config.pool_monitor_interval:
-            return
+    def _monitor_message(self) -> str:
         free = sum(len(bucket) for bucket in self._free)
         used = len(self._allocated)
         used_bytes = sum(self._block_bytes(b) for b in self._allocated.values())
         total_bytes = self._pool_bytes + used_bytes
         ratio = (self._acquire_hits / self._acquire_total * 100) if self._acquire_total > 0 else 0
-        print(f"[POOL MONITOR] Blocks: {free + used} ({used} in use) | "
-              f"Acquires: {self._acquire_total} ({self._acquire_hits} hits, {ratio:.1f}%) | "
-              f"Memory: {self._format_bytes(total_bytes)} ({self._format_bytes(self._pool_bytes)} free)")
-        self._last_monitor_time = now
-
-    def _format_bytes(self, n):
-        units = ['B', 'KB', 'MB', 'GB']
-        value = float(n)
-        unit_idx = 0
-        while value >= 1024 and unit_idx < len(units) - 1:
-            value /= 1024
-            unit_idx += 1
-        return f"{value:,.2f} {units[unit_idx]}"
+        return (f"[POOL MONITOR] Blocks: {free + used} ({used} in use) | "
+                f"Acquires: {self._acquire_total} ({self._acquire_hits} hits, {ratio:.1f}%) | "
+                f"Memory: {self._format_bytes(total_bytes)} ({self._format_bytes(self._pool_bytes)} free)")
 
     def pool_stats(self):
         delta = self._pool_bytes_delta
