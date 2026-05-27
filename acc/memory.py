@@ -24,11 +24,11 @@ class MemoryAllocator:
         return None
 
 
-class NaiveAllocator(PinMemoryAllocator):
-    """Every acquire allocates fresh pinned memory; release discards it."""
+class NativeMemoryAllocator(MemoryAllocator):
+    """Simple allocation without pool or pin memory."""
 
-    def acquire(self, size: int) -> torch.Tensor:
-        return torch.empty(size, pin_memory=True)
+    def acquire(self, tensor: torch.Tensor) -> torch.Tensor:
+        return torch.empty_like(tensor).cpu()
 
     def release(self, block: torch.Tensor) -> None:
         del block
