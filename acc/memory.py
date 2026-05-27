@@ -27,11 +27,41 @@ class MemoryAllocator:
 class NativeMemoryAllocator(MemoryAllocator):
     """Simple allocation without pool or pin memory."""
 
+    def __init__(self):
+        self._acquire_total = 0
+        self._allocated_bytes = 0
+        self._last_monitor_time = 0.0
+
     def acquire(self, tensor: torch.Tensor) -> torch.Tensor:
-        return torch.empty_like(tensor).cpu()
+        self._acquire_total += 1
+        block = torch.empty_like(tensor).cpu()
+        self._allocated_bytes += block.numel() * block.element_size()
+        self._check_monitor()
+        return block
 
     def release(self, block: torch.Tensor) -> None:
         del block
+
+    def _check_monitor(self):
+        from .config import config
+        now = time.time()
+        if self._acquire_total == 1:
+            return
+        elapsed = now - self._last_monitor_time
+        if elapsed < config.pool_monitor_interval:
+            return
+        print(f"[ALLOC MONITOR] Allocations: {self._acquire_total} | "
+              f"Memory: {self._format_bytes(self._allocated_bytes)}")
+        self._last_monitor_time = now
+
+    def _format_bytes(self, n):
+        units = ['B', 'KB', 'MB', 'GB']
+        value = float(n)
+        unit_idx = 0
+        while value >= 1024 and unit_idx < len(units) - 1:
+            value /= 1024
+            unit_idx += 1
+        return f"{value:,.2f} {units[unit_idx]}"
 
 
 class PinMemoryAllocator(MemoryAllocator):
