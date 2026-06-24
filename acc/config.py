@@ -7,9 +7,12 @@ class Config:
     dump_path: str = "."
     dump_enabled: bool = True
     max_tensor_size_mb: int = 10240
-    io_monitor_interval: float = 5.0
-    cache_monitor_interval: float = 5.0
-    pool_monitor_interval: float = 5.0
+    io_monitor_interval: float = 1.0
+    cache_monitor_interval: float = 1.0
+    pool_monitor_interval: float = 1.0
+    memory_allocator: str = "native"
+    serializer_kind: str = "sync"
+    capturer_backends: str = "ops,module"
     async_io: bool = True
     async_serialization: bool = True
 

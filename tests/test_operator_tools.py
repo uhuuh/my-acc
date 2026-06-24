@@ -45,35 +45,6 @@ def test_ops_dump_context_manager():
     print("\nPASS: Test 1 passed\n")
 
 
-def test_ops_dump_decorator():
-    """Test ops_dump as decorator."""
-    print("=" * 60)
-    print("Test 2: ops_dump as decorator")
-    print("=" * 60)
-    
-    with tempfile.TemporaryDirectory() as tmpdir:
-        # Define a function to decorate
-        @ops_dump(tmpdir)
-        def run_model():
-            x = torch.randn(16, 32)
-            y = torch.randn(32, 64)
-            z = torch.matmul(x, y)
-            return torch.sum(z)
-        
-        # Run decorated function
-        result = run_model()
-        print(f"\nFunction result: {result.item():.4f}")
-        
-        # Check dump files
-        dump_dirs = [d for d in os.listdir(tmpdir) if os.path.isdir(os.path.join(tmpdir, d))]
-        for dump_dir in dump_dirs:
-            dump_path = os.path.join(tmpdir, dump_dir)
-            dump_files = [f for f in os.listdir(dump_path) if f.endswith('.pkl')]
-            print(f"Dump files: {len(dump_files)} files")
-    
-    print("\nPASS: Test 2 passed\n")
-
-
 def test_ops_comp():
     """Test ops_comp function."""
     print("=" * 60)
@@ -131,7 +102,6 @@ def main():
     
     # Run tests
     test_ops_dump_context_manager()
-    test_ops_dump_decorator()
     test_ops_comp()
     
     print("=" * 60)

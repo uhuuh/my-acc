@@ -41,7 +41,7 @@ def test_saves_operator_outputs():
                 metadata = json.load(f)
 
             # Check if this is an add operation
-            if 'add' in metadata['opname'].lower():
+            if 'add' in metadata['key'].lower():
                 print(f"Found add operation: {json_file}")
 
                 # Load PKL file

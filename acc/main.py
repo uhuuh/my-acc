@@ -1,4 +1,7 @@
+"""Public API: ops_dump context manager."""
+
 from .config import config
+from .capturer import Capturer
 from .manager import Manager
 
 
@@ -17,21 +20,12 @@ class _OpsDumpContext:
             self._manager.stop()
         return False
 
-    def __call__(self, func):
-        def wrapper(*args, **kwargs):
-            with self:
-                return func(*args, **kwargs)
-        return wrapper
 
-
-def ops_dump(dump_path=None, **kwargs):
-    if callable(dump_path) and not isinstance(dump_path, str):
-        func, dump_path = dump_path, None
-    else:
-        func = None
+def ops_dump(dump_path, model=None, **kwargs):
     merged = {k: v for k, v in kwargs.items() if v is not None}
     if dump_path is not None:
         merged['dump_path'] = dump_path
     config.update(**merged)
-    ctx = _OpsDumpContext(Manager())
-    return ctx(func) if func else ctx
+    capturer = Capturer(model=model)
+    manager = Manager(capturer)
+    return _OpsDumpContext(manager)

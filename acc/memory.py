@@ -16,7 +16,9 @@ class MemoryAllocator:
     def create(cls, kind: str = "native") -> 'MemoryAllocator':
         if kind == "pin":
             return PinMemoryAllocator()
-        return NativeMemoryAllocator()
+        if kind == "native":
+            return NativeMemoryAllocator()
+        raise ValueError(f"Unknown allocator kind: '{kind}'. Expected 'native' or 'pin'.")
 
     def acquire(self, tensor: torch.Tensor) -> torch.Tensor:
         raise NotImplementedError

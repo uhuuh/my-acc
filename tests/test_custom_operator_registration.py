@@ -14,16 +14,16 @@ import json
 from acc import ops_dump
 
 
-def get_opnames_from_dump(session_dir):
-    """Helper to extract operator names from dump session."""
+def get_keys_from_dump(session_dir):
+    """Helper to extract operator keys from dump session."""
     dump_files = [f for f in os.listdir(session_dir) if f.endswith('.json')]
-    opnames = []
+    keys = []
     for json_file in dump_files:
         json_path = os.path.join(session_dir, json_file)
         with open(json_path, 'r') as f:
             metadata = json.load(f)
-        opnames.append(metadata['opname'])
-    return opnames
+        keys.append(metadata['key'])
+    return keys
 
 
 # ============================================================
@@ -65,18 +65,18 @@ def test_torch_library_explicit_autograd():
 
         dump_dirs = [d for d in os.listdir(tmpdir) if os.path.isdir(os.path.join(tmpdir, d))]
         session_dir = os.path.join(tmpdir, dump_dirs[0])
-        opnames = get_opnames_from_dump(session_dir)
+        keys = get_keys_from_dump(session_dir)
 
-        print(f"Captured {len(opnames)} operators: {opnames}")
+        print(f"Captured {len(keys)} operators: {keys}")
 
-        assert len(opnames) >= 4, "Should capture at least 4 operators (add, mul, relu, custom)"
+        assert len(keys) >= 4, "Should capture at least 4 operators (add, mul, relu, custom)"
 
-        custom_op_found = any('custom_add' in op.lower() for op in opnames)
+        custom_op_found = any('custom_add' in op.lower() for op in keys)
         print(f"Custom operator captured: {custom_op_found}")
 
         expected_ops = ['add', 'mul', 'relu']
         for expected in expected_ops:
-            found = any(expected in op.lower() for op in opnames)
+            found = any(expected in op.lower() for op in keys)
             assert found, f"Expected {expected} operator not found"
             print(f"PASS: Found {expected}")
 
@@ -123,17 +123,17 @@ def test_torch_library_implicit_autograd():
 
             dump_dirs = [d for d in os.listdir(tmpdir) if os.path.isdir(os.path.join(tmpdir, d))]
             session_dir = os.path.join(tmpdir, dump_dirs[0])
-            opnames = get_opnames_from_dump(session_dir)
+            keys = get_keys_from_dump(session_dir)
 
-            print(f"Captured {len(opnames)} operators: {opnames}")
+            print(f"Captured {len(keys)} operators: {keys}")
 
             # CompositeImplicitAutograd 会捕获内部算子
-            assert len(opnames) >= 3, f"Should capture at least 3 internal operators, got {len(opnames)}"
+            assert len(keys) >= 3, f"Should capture at least 3 internal operators, got {len(keys)}"
 
             # 验证捕获了内部的原生算子
             expected_ops = ['add', 'mul', 'relu']
             for expected in expected_ops:
-                found = any(expected in op.lower() for op in opnames)
+                found = any(expected in op.lower() for op in keys)
                 assert found, f"Expected {expected} operator not found in decomposition"
                 print(f"PASS: Found {expected} in decomposition")
 
@@ -186,14 +186,14 @@ def test_autograd_function():
 
         dump_dirs = [d for d in os.listdir(tmpdir) if os.path.isdir(os.path.join(tmpdir, d))]
         session_dir = os.path.join(tmpdir, dump_dirs[0])
-        opnames = get_opnames_from_dump(session_dir)
+        keys = get_keys_from_dump(session_dir)
 
-        print(f"Captured {len(opnames)} operators: {opnames}")
+        print(f"Captured {len(keys)} operators: {keys}")
 
         # 验证捕获了前向传播的算子
         forward_ops = ['add', 'mul', 'exp']
         for expected in forward_ops:
-            found = any(expected in op.lower() for op in opnames)
+            found = any(expected in op.lower() for op in keys)
             assert found, f"Expected {expected} in forward pass"
             print(f"PASS: Found {expected} in forward")
 
@@ -228,14 +228,14 @@ def test_torchjit_script():
 
         dump_dirs = [d for d in os.listdir(tmpdir) if os.path.isdir(os.path.join(tmpdir, d))]
         session_dir = os.path.join(tmpdir, dump_dirs[0])
-        opnames = get_opnames_from_dump(session_dir)
+        keys = get_keys_from_dump(session_dir)
 
-        print(f"Captured {len(opnames)} operators: {opnames}")
+        print(f"Captured {len(keys)} operators: {keys}")
 
         # 验证捕获了内部的算子
         expected_ops = ['add', 'mul', 'sigmoid']
         for expected in expected_ops:
-            found = any(expected in op.lower() for op in opnames)
+            found = any(expected in op.lower() for op in keys)
             if found:
                 print(f"PASS: Found {expected}")
             else:
@@ -276,14 +276,14 @@ def test_custom_module():
 
         dump_dirs = [d for d in os.listdir(tmpdir) if os.path.isdir(os.path.join(tmpdir, d))]
         session_dir = os.path.join(tmpdir, dump_dirs[0])
-        opnames = get_opnames_from_dump(session_dir)
+        keys = get_keys_from_dump(session_dir)
 
-        print(f"Captured {len(opnames)} operators: {opnames}")
+        print(f"Captured {len(keys)} operators: {keys}")
 
         # 验证捕获了内部的算子
         expected_ops = ['mm', 'relu', 'dropout', 'bernoulli']
         for expected in expected_ops:
-            found = any(expected in op.lower() for op in opnames)
+            found = any(expected in op.lower() for op in keys)
             if found:
                 print(f"PASS: Found {expected}")
 
@@ -322,14 +322,14 @@ def test_nested_custom_calls():
 
         dump_dirs = [d for d in os.listdir(tmpdir) if os.path.isdir(os.path.join(tmpdir, d))]
         session_dir = os.path.join(tmpdir, dump_dirs[0])
-        opnames = get_opnames_from_dump(session_dir)
+        keys = get_keys_from_dump(session_dir)
 
-        print(f"Captured {len(opnames)} operators: {opnames}")
+        print(f"Captured {len(keys)} operators: {keys}")
 
         # 验证捕获了所有嵌套调用中的算子
         expected_ops = ['add', 'mul', 'exp']
         for expected in expected_ops:
-            found = any(expected in op.lower() for op in opnames)
+            found = any(expected in op.lower() for op in keys)
             assert found, f"Expected {expected} operator not found"
             print(f"PASS: Found {expected}")
 
@@ -363,13 +363,13 @@ def test_custom_loop():
 
         dump_dirs = [d for d in os.listdir(tmpdir) if os.path.isdir(os.path.join(tmpdir, d))]
         session_dir = os.path.join(tmpdir, dump_dirs[0])
-        opnames = get_opnames_from_dump(session_dir)
+        keys = get_keys_from_dump(session_dir)
 
-        print(f"Captured {len(opnames)} operators: {opnames}")
+        print(f"Captured {len(keys)} operators: {keys}")
 
         # 验证捕获了循环中的算子（3次循环 = 6个算子）
-        add_count = sum(1 for op in opnames if 'add' in op.lower())
-        mul_count = sum(1 for op in opnames if 'mul' in op.lower())
+        add_count = sum(1 for op in keys if 'add' in op.lower())
+        mul_count = sum(1 for op in keys if 'mul' in op.lower())
 
         print(f"add operations: {add_count}, mul operations: {mul_count}")
         assert add_count >= 3, f"Expected at least 3 add operations, got {add_count}"
@@ -408,10 +408,10 @@ def test_custom_conditional():
 
         dump_dirs = [d for d in os.listdir(tmpdir) if os.path.isdir(os.path.join(tmpdir, d))]
         session_dir = os.path.join(tmpdir, dump_dirs[0])
-        opnames_true = get_opnames_from_dump(session_dir)
+        keys_true = get_keys_from_dump(session_dir)
 
-        print(f"Condition=True captured: {opnames_true}")
-        assert any('add' in op.lower() for op in opnames_true), "add should be captured when condition=True"
+        print(f"Condition=True captured: {keys_true}")
+        assert any('add' in op.lower() for op in keys_true), "add should be captured when condition=True"
         print("PASS: True branch captured add")
 
     # Test condition=False branch
@@ -423,10 +423,10 @@ def test_custom_conditional():
 
         dump_dirs = [d for d in os.listdir(tmpdir) if os.path.isdir(os.path.join(tmpdir, d))]
         session_dir = os.path.join(tmpdir, dump_dirs[0])
-        opnames_false = get_opnames_from_dump(session_dir)
+        keys_false = get_keys_from_dump(session_dir)
 
-        print(f"Condition=False captured: {opnames_false}")
-        assert any('mul' in op.lower() for op in opnames_false), "mul should be captured when condition=False"
+        print(f"Condition=False captured: {keys_false}")
+        assert any('mul' in op.lower() for op in keys_false), "mul should be captured when condition=False"
         print("PASS: False branch captured mul")
 
     print("PASS: custom conditional test completed\n")

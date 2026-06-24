@@ -6,19 +6,18 @@ from datetime import datetime
 
 from .config import config
 from .cache import CacheManager
-from .capturer import Capturer
 
 
 class Manager:
-    def __init__(self):
+    def __init__(self, capturer):
         self.session_dir = None
         self._cache_mgr = CacheManager()
-        self._capturer = Capturer()
+        self._capturer = capturer
         self._serializer = None
         self._sequence = 0
 
     def start(self):
-        from .serialization import Serializer, AsyncSerializer
+        from .serialization import Serializer
 
         import torch.distributed as dist
         if dist.is_initialized():
@@ -37,12 +36,8 @@ class Manager:
 
         self._cache_mgr.start(self.session_dir)
 
-        if config.async_serialization:
-            self._serializer = AsyncSerializer()
-            print(f"[MANAGER] using async serializer")
-        else:
-            self._serializer = Serializer()
-            print(f"[MANAGER] using sync serializer")
+        self._serializer = Serializer.create(config.serializer_kind)
+        print(f"[MANAGER] using {config.serializer_kind} serializer")
         self._serializer.start(self.session_dir)
 
         self._sequence = 0
@@ -57,7 +52,7 @@ class Manager:
         self._cache_mgr.stop()
         print(f"[MANAGER] stopped")
 
-    def _handler(self, opname, args, kwargs, outputs):
+    def _handler(self, capturer, key, args, kwargs, outputs):
         frames = []
         f = sys._getframe(0)
         while f:
@@ -81,8 +76,9 @@ class Manager:
 
         seq = self._sequence
         item = {
-            'sequence': seq,
-            'opname': opname,
+            'seq_id': seq,
+            'capturer': capturer,
+            'key': key,
             'frames': frame_dicts,
             'inputs': {'args': serialized_args, 'kwargs': serialized_kwargs},
             'outputs': serialized_outputs,
@@ -90,5 +86,5 @@ class Manager:
         try:
             self._serializer.save(item)
         except Exception as e:
-            print(f"[DUMP ERROR] {seq:06d} | {opname} | serializer.save failed: {e}")
+            print(f"[DUMP ERROR] {seq:06d} | {key} | serializer.save failed: {e}")
         self._sequence += 1

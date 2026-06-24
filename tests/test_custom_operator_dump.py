@@ -62,7 +62,7 @@ def test_custom_module_ops_dump():
             json_path = os.path.join(session_dir, json_file)
             with open(json_path, 'r') as f:
                 metadata = json.load(f)
-            opnames.append(metadata['opname'])
+            opnames.append(metadata['key'])
 
         print(f"Operators: {opnames}")
 
@@ -101,7 +101,7 @@ def test_custom_function_ops_dump():
             json_path = os.path.join(session_dir, json_file)
             with open(json_path, 'r') as f:
                 metadata = json.load(f)
-            opnames.append(metadata['opname'])
+            opnames.append(metadata['key'])
 
         print(f"Operators: {opnames}")
 
@@ -144,7 +144,7 @@ def test_nested_custom_calls():
             json_path = os.path.join(session_dir, json_file)
             with open(json_path, 'r') as f:
                 metadata = json.load(f)
-            opnames.append(metadata['opname'])
+            opnames.append(metadata['key'])
 
         print(f"Operators: {opnames}")
 
@@ -178,7 +178,7 @@ def test_backward_pass_not_captured():
             json_path = os.path.join(session_dir, json_file)
             with open(json_path, 'r') as f:
                 metadata = json.load(f)
-            opnames.append(metadata['opname'])
+            opnames.append(metadata['key'])
 
         print(f"Forward operators: {opnames}")
 
@@ -208,7 +208,7 @@ def test_backward_pass_not_captured():
                 json_path = os.path.join(session_dir2, json_file)
                 with open(json_path, 'r') as f:
                     metadata = json.load(f)
-                opnames2.append(metadata['opname'])
+                opnames2.append(metadata['key'])
 
             print(f"All operators (forward+backward): {opnames2}")
 
@@ -293,7 +293,7 @@ def test_backward_detailed_check():
             with open(json_path, 'r') as f:
                 metadata = json.load(f)
 
-            opname = metadata['opname']
+            opname = metadata['key']
             opnames.append(opname)
 
             print(f"  {json_file}")

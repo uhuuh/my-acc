@@ -47,7 +47,7 @@ class CacheManager:
         self._started = True
         self.cache_dir = os.path.join(session_dir, 'cache')
         os.makedirs(self.cache_dir, exist_ok=False)
-        self._pool = MemoryAllocator.create("pin")
+        self._pool = MemoryAllocator.create(config.memory_allocator)
         self._max_tensor_size_mb = config.max_tensor_size_mb
         self._io = IOWriter(name="cache", on_done=self._on_io_done)
         self._io.start()

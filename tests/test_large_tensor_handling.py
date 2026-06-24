@@ -42,7 +42,7 @@ def test_large_tensor_replaced_with_none():
                 metadata = json.load(f)
 
             # Check if this is an add operation
-            if 'add' in metadata['opname'].lower():
+            if 'add' in metadata['key'].lower():
                 print(f"Found add operation: {json_file}")
 
                 # Load PKL file
@@ -117,7 +117,7 @@ def test_contiguous_error_handling():
             with open(json_path, 'r') as f:
                 metadata = json.load(f)
 
-            if 'add' in metadata['opname'].lower():
+            if 'add' in metadata['key'].lower():
                 print(f"Found add operation: {json_file}")
 
                 # Load PKL file

@@ -24,13 +24,15 @@ from .io import IOWriter
 @dataclass
 class OperatorRecord:
     """Data structure for a single operator dump."""
-    sequence: int
-    filepath: str
-    filename: str
-    function: str
-    lineno: int
-    opname: str
-    call_stack: List[Dict]
+    seq_id: int
+    save_id: str = ''
+    filepath: str = ''
+    filename: str = ''
+    function: str = ''
+    lineno: int = 0
+    capturer: str = ''
+    key: str = ''
+    call_stack: List[Dict] = field(default_factory=list)
     args: List[Any] = field(default_factory=list)
     kwargs: Dict[str, Any] = field(default_factory=dict)
     outputs: List[Any] = field(default_factory=list)
@@ -38,12 +40,14 @@ class OperatorRecord:
     @classmethod
     def from_dict(cls, data: Dict) -> 'OperatorRecord':
         return cls(
-            sequence=data['sequence'],
+            seq_id=data['seq_id'],
+            save_id=data.get('save_id', ''),
             filepath=data.get('filepath', ''),
             filename=data['filename'],
             function=data['function'],
             lineno=data.get('lineno', 0),
-            opname=data['opname'],
+            capturer=data.get('capturer', 'ops'),
+            key=data['key'],
             call_stack=data.get('call_stack', []),
             args=data.get('args', []),
             kwargs=data.get('kwargs', {}),
@@ -52,12 +56,14 @@ class OperatorRecord:
 
     def to_dict(self) -> Dict:
         return {
-            'sequence': self.sequence,
+            'seq_id': self.seq_id,
+            'save_id': self.save_id,
             'filepath': self.filepath,
             'filename': self.filename,
             'function': self.function,
             'lineno': self.lineno,
-            'opname': self.opname,
+            'capturer': self.capturer,
+            'key': self.key,
             'call_stack': self.call_stack
         }
 
@@ -75,8 +81,8 @@ def _sanitize_filename(filename: str) -> str:
     return result
 
 
-def _sanitize_opname(opname: str) -> str:
-    return opname.replace('.', '_').replace('::', '_')
+def _sanitize_key(key: str) -> str:
+    return key.replace('.', '_').replace('::', '_')
 
 
 def _process_frames(frames: List[Dict]) -> Tuple[str, str, str, int]:
@@ -102,59 +108,41 @@ def _wrap_outputs(data: Any) -> list:
 
 
 class Serializer:
+    """Base serializer with factory method."""
+
     def __init__(self):
         self.session_dir = None
-        self._io = None
+
+    @classmethod
+    def create(cls, kind: str = "sync") -> 'Serializer':
+        if kind == "sync":
+            return SyncSerializer()
+        if kind == "async":
+            return AsyncSerializer()
+        raise ValueError(f"Unknown serializer kind: '{kind}'. Expected 'sync' or 'async'.")
 
     def start(self, session_dir):
-        self.session_dir = session_dir
-        self._io = IOWriter(name="seq")
-        self._io.start()
-        print(f"[SERIALIZER] started: {self.session_dir}")
+        raise NotImplementedError
 
     def stop(self):
-        if self._io is not None:
-            self._io.stop()
-        print(f"[SERIALIZER] stopped")
+        raise NotImplementedError
 
     def save(self, item):
-        seq = item['sequence']
-        opname = item['opname']
-        frames = item['frames']
-
-        filepath, filename, function, lineno = _process_frames(frames)
-        call_stack = frames
-
-        filename_safe = _sanitize_filename(filename)
-        function_safe = _sanitize_filename(function)
-        opname_safe = _sanitize_opname(opname)
-
-        json_filename = f"{seq:06d}__{filename_safe}__{function_safe}__{opname_safe}.json"
-        pkl_filename = f"{seq:06d}__{filename_safe}__{function_safe}__{opname_safe}.pkl"
-        json_path = os.path.join(self.session_dir, json_filename)
-        pkl_path = os.path.join(self.session_dir, pkl_filename)
-
-        self._io.save(json_path, {
-            'sequence': seq, 'filepath': filepath, 'filename': filename,
-            'function': function, 'lineno': lineno, 'opname': opname,
-            'call_stack': call_stack,
-        })
-        self._io.save(pkl_path, {
-            'inputs': item['inputs'],
-            'outputs': item['outputs'],
-        })
+        raise NotImplementedError
 
     @staticmethod
     def load_metadata(json_path):
         with open(json_path, 'r') as f:
             metadata = json.load(f)
         return OperatorRecord(
-            sequence=metadata['sequence'],
+            seq_id=metadata['seq_id'],
+            save_id=metadata.get('save_id', ''),
             filepath=metadata.get('filepath', ''),
             filename=metadata['filename'],
             function=metadata['function'],
             lineno=metadata.get('lineno', 0),
-            opname=metadata['opname'],
+            capturer=metadata.get('capturer', 'ops'),
+            key=metadata['key'],
             call_stack=metadata.get('call_stack', []),
         )
 
@@ -179,7 +167,62 @@ class Serializer:
         return {'args': resolved_args, 'kwargs': resolved_kwargs}, resolved_outputs
 
 
-class AsyncSerializer:
+class SyncSerializer(Serializer):
+    """Sync serializer using IOWriter directly."""
+
+    def __init__(self):
+        super().__init__()
+        self._io = None
+
+    def start(self, session_dir):
+        self.session_dir = session_dir
+        self._io = IOWriter(name="seq")
+        self._io.start()
+        print(f"[SERIALIZER] started: {self.session_dir}")
+
+    def stop(self):
+        if self._io is not None:
+            self._io.stop()
+        print(f"[SERIALIZER] stopped")
+
+    def save(self, item):
+        seq = item['seq_id']
+        key = item['key']
+        capturer = item['capturer']
+        frames = item['frames']
+
+        filepath, filename, function, lineno = _process_frames(frames)
+        call_stack = frames
+
+        filename_safe = _sanitize_filename(filename)
+        function_safe = _sanitize_filename(function)
+        key_safe = _sanitize_key(key)
+
+        save_id = f"{seq:06d}__{capturer}__{filename_safe}__{function_safe}__{key_safe}"
+        json_filename = f"{save_id}.json"
+        pkl_filename = f"{save_id}.pkl"
+        json_path = os.path.join(self.session_dir, json_filename)
+        pkl_path = os.path.join(self.session_dir, pkl_filename)
+
+        record = OperatorRecord(
+            seq_id=seq,
+            save_id=save_id,
+            filepath=filepath,
+            filename=filename,
+            function=function,
+            lineno=lineno,
+            capturer=capturer,
+            key=key,
+            call_stack=call_stack,
+        )
+        self._io.save(json_path, record.to_dict())
+        self._io.save(pkl_path, {
+            'inputs': item['inputs'],
+            'outputs': item['outputs'],
+        })
+
+
+class AsyncSerializer(Serializer):
     def __init__(self):
         self.session_dir = None
         self._process = None
@@ -208,7 +251,7 @@ class AsyncSerializer:
 
 
 def _serializer_subprocess(session_dir, queue):
-    serializer = Serializer()
+    serializer = SyncSerializer()
     serializer.start(session_dir)
     while True:
         item = queue.get()
@@ -217,8 +260,8 @@ def _serializer_subprocess(session_dir, queue):
         try:
             serializer.save(item)
         except Exception as e:
-            seq = item.get('sequence', '?')
-            opname = item.get('opname', '?')
-            print(f"[DUMP ERROR] {seq:06d} | {opname} | serializer.save failed: {e}")
+            seq = item.get('seq_id', '?')
+            key = item.get('key', '?')
+            print(f"[DUMP ERROR] {seq:06d} | {key} | serializer.save failed: {e}")
     serializer.stop()
 
