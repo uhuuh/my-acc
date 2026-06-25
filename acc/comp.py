@@ -1,13 +1,18 @@
 """
 Operator Dumps Comparison for PyTorch Operator Dump Tool.
 
-Provides ops_comp function for comparing two dump sessions.
+Provides acc_comp function for comparing two dump sessions.
 """
 
+import functools
 import json
 import os
 import time
 from typing import Callable, List, Tuple
+
+import numpy as np
+import torch
+
 from .serialization import Serializer, OperatorRecord
 from .comparators import (
     create_comparator,
@@ -60,15 +65,13 @@ def _lcs_length(a: List[str], b: List[str]) -> Tuple[int, List[Tuple[int, int]]]
 
 def _load_all_metadata(
     dump_dir: str,
-    is_left: bool,
-    filter_fn: Callable[[bool, OperatorRecord], bool] | None = None,
+    filter_fn: Callable[[OperatorRecord], bool] | None = None,
 ) -> list:
     """Load all metadata from dump directory (JSON only, no tensor data).
 
     Args:
         dump_dir: Path to the dump session directory.
-        is_left: True when loading the left-side (A) dump, False for right (B).
-        filter_fn: Optional callable(is_left, record) -> bool.
+        filter_fn: Optional callable(record) -> bool.
             Return True to skip (filter out) the record.
     """
     records = []
@@ -77,7 +80,7 @@ def _load_all_metadata(
             json_path = os.path.join(dump_dir, filename)
             try:
                 record = Serializer.load_metadata(json_path)
-                if filter_fn is not None and filter_fn(is_left, record):
+                if filter_fn is not None and filter_fn(record):
                     continue
                 records.append(record)
             except (json.JSONDecodeError, FileNotFoundError) as e:
@@ -168,7 +171,7 @@ def _compare_matched_pairs(records_a: list, records_b: list, matched_pairs, stor
         _compare_lists(outputs_a, outputs_b, "Outputs")
 
 
-def ops_comp(
+def acc_comp(
     dump_dir_a: str,
     dump_dir_b: str,
     key_fn: Callable[[bool, OperatorRecord], str] | None = None,
@@ -186,9 +189,15 @@ def ops_comp(
     """
     if key_fn is None:
         key_fn = default_key_fn
-    records_a = _load_all_metadata(dump_dir_a, is_left=True, filter_fn=filter_fn)
+    records_a = _load_all_metadata(
+        dump_dir_a,
+        filter_fn=functools.partial(filter_fn, True) if filter_fn is not None else None,
+    )
     print(f"[LCS] Loading dump A: {len(records_a)} operators from {dump_dir_a}")
-    records_b = _load_all_metadata(dump_dir_b, is_left=False, filter_fn=filter_fn)
+    records_b = _load_all_metadata(
+        dump_dir_b,
+        filter_fn=functools.partial(filter_fn, False) if filter_fn is not None else None,
+    )
     print(f"[LCS] Loading dump B: {len(records_b)} operators from {dump_dir_b}")
     _sep()
     matched_pairs = _find_lcs_matches(records_a, records_b, key_fn)
@@ -196,3 +205,71 @@ def ops_comp(
     storage_a = os.path.join(dump_dir_a, 'storage')
     storage_b = os.path.join(dump_dir_b, 'storage')
     _compare_matched_pairs(records_a, records_b, matched_pairs, storage_a, storage_b)
+
+
+def get_tensor_info(obj) -> str:
+    """Return formatted tensor stats string for a tensor or numpy array."""
+    if isinstance(obj, np.ndarray):
+        t = torch.from_numpy(obj)
+    else:
+        t = obj
+    if t.numel() == 0:
+        return f"tensor(dtype={t.dtype}, shape={list(t.shape)}, empty)"
+    t_flat = t.float().flatten()
+    max_val = t_flat.max().item()
+    min_val = t_flat.min().item()
+    mean_val = t_flat.mean().item()
+    std_val = t_flat.std(unbiased=False).item()
+    q = torch.quantile(t_flat, torch.tensor([0.25, 0.5, 0.75])).tolist()
+    return (
+        f"tensor(dtype={t.dtype}, shape={list(t.shape)}, "
+        f"max={max_val:.4f}, min={min_val:.4f}, mean={mean_val:.4f}, "
+        f"std={std_val:.4f}, "
+        f"q25={q[0]:.4f}, q50={q[1]:.4f}, q75={q[2]:.4f})"
+    )
+
+
+def _format_val(v):
+    """Format a single value for info display."""
+    if isinstance(v, (torch.Tensor, np.ndarray)):
+        return get_tensor_info(v)
+    if isinstance(v, (int, float)):
+        return str(v)
+    if v is None:
+        return "None"
+    return repr(v)
+
+
+def acc_info(dump_dir, filter_fn=None):
+    """Print operator info from a dump session.
+
+    Args:
+        dump_dir: Path to the dump session directory.
+        filter_fn: Optional callable(record) -> bool.
+            Return True to skip (filter out) the record before printing.
+    """
+    records = _load_all_metadata(dump_dir, filter_fn=filter_fn)
+    total = len(records)
+    print(f"[INFO] {total} operators loaded from {dump_dir}")
+
+    for idx, record in enumerate(records, 1):
+        print(f"[INFO {idx}/{total}] {record.save_id}")
+
+        pkl_path = os.path.join(dump_dir, f"{record.save_id}.pkl")
+        storage = os.path.join(dump_dir, 'storage')
+        try:
+            inputs, outputs = Serializer.load_data(pkl_path, storage)
+        except Exception as e:
+            print(f"  [ERROR] failed to load data: {e}")
+            continue
+
+        kwargs = inputs.get('kwargs', {})
+        if kwargs:
+            print("  kwargs:")
+            for k, v in kwargs.items():
+                print(f"    {k}: {_format_val(v)}")
+
+        if outputs:
+            print("  outputs:")
+            for i, v in enumerate(outputs):
+                print(f"    [{i}]: {_format_val(v)}")

@@ -35,7 +35,7 @@ class Capturer:
             elif name == "module":
                 if self._model is None:
                     raise ValueError(
-                        "module backend requires a model. Pass model= to ops_dump()."
+                        "module backend requires a model. Pass model= to acc_dump()."
                     )
                 backend = ModuleCapturer(self._model)
             else:

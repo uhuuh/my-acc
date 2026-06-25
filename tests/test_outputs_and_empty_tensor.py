@@ -10,20 +10,20 @@ import torch
 import tempfile
 import json
 import pickle
-from acc import ops_dump, ops_comp
+from acc import acc_dump, acc_comp
 from acc.cache import CacheEntry, CacheManager
 from acc.io import IOWriter
 from acc.memory import MemoryAllocator
 
 
 def test_saves_operator_outputs():
-    """Test that ops_dump saves operator outputs."""
+    """Test that acc_dump saves operator outputs."""
     print("=" * 60)
     print("Test: Saving operator outputs")
     print("=" * 60)
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        with ops_dump(tmpdir) as dumper:
+        with acc_dump(tmpdir) as dumper:
             a = torch.randn(2, 3)
             b = torch.randn(2, 3)
             c = a + b  # This should save output tensor c
@@ -91,11 +91,11 @@ def test_empty_tensor_comparison():
         os.makedirs(dump_dir_b)
 
         # Create dumps with empty tensors
-        with ops_dump(dump_dir_a) as dumper:
+        with acc_dump(dump_dir_a) as dumper:
             empty_a = torch.empty(0, 3)  # Empty tensor
             result_a = empty_a + 1
 
-        with ops_dump(dump_dir_b) as dumper:
+        with acc_dump(dump_dir_b) as dumper:
             empty_b = torch.empty(0, 3)  # Empty tensor
             result_b = empty_b + 1
 
@@ -110,7 +110,7 @@ def test_empty_tensor_comparison():
         print("-" * 60)
 
         # Compare dumps - should handle empty tensors without error
-        ops_comp(session_a_path, session_b_path)
+        acc_comp(session_a_path, session_b_path)
 
         print("\nPASS: Empty tensor comparison handled correctly\n")
 

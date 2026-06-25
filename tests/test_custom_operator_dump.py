@@ -1,5 +1,5 @@
 """
-Test that ops_dump captures operators called inside custom functions/modules.
+Test that acc_dump captures operators called inside custom functions/modules.
 """
 
 import sys
@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import torch
 import tempfile
 import json
-from acc import ops_dump
+from acc import acc_dump
 
 
 class CustomModule(torch.nn.Module):
@@ -35,7 +35,7 @@ def custom_function(x):
     return y
 
 
-def test_custom_module_ops_dump():
+def test_custom_module_acc_dump():
     """测试捕获自定义模块内部的算子调用"""
     print("=" * 60)
     print("Test: Custom module internal operators")
@@ -45,7 +45,7 @@ def test_custom_module_ops_dump():
         module = CustomModule()
         x = torch.randn(3, 5)
 
-        with ops_dump(tmpdir) as dumper:
+        with acc_dump(tmpdir) as dumper:
             result = module(x)
 
         # 检查 session 目录
@@ -77,7 +77,7 @@ def test_custom_module_ops_dump():
         print("PASS: Custom module test passed\n")
 
 
-def test_custom_function_ops_dump():
+def test_custom_function_acc_dump():
     """测试捕获自定义函数内部的算子调用"""
     print("=" * 60)
     print("Test: Custom function internal operators")
@@ -86,7 +86,7 @@ def test_custom_function_ops_dump():
     with tempfile.TemporaryDirectory() as tmpdir:
         x = torch.randn(5, 5)
 
-        with ops_dump(tmpdir) as dumper:
+        with acc_dump(tmpdir) as dumper:
             result = custom_function(x)
 
         # 检查 session 目录
@@ -130,7 +130,7 @@ def test_nested_custom_calls():
     with tempfile.TemporaryDirectory() as tmpdir:
         x = torch.randn(3, 3)
 
-        with ops_dump(tmpdir) as dumper:
+        with acc_dump(tmpdir) as dumper:
             result = outer_function(x)
 
         dump_dirs = [d for d in os.listdir(tmpdir) if os.path.isdir(os.path.join(tmpdir, d))]
@@ -164,7 +164,7 @@ def test_backward_pass_not_captured():
         weight = torch.randn(5, 10, requires_grad=True)
 
         # 前向传播
-        with ops_dump(tmpdir) as dumper:
+        with acc_dump(tmpdir) as dumper:
             y = torch.matmul(x, weight)
             y = y.sum()
 
@@ -193,7 +193,7 @@ def test_backward_pass_not_captured():
             x2 = torch.randn(3, 5, requires_grad=True)
             weight2 = torch.randn(5, 10, requires_grad=True)
 
-            with ops_dump(tmpdir2) as dumper:
+            with acc_dump(tmpdir2) as dumper:
                 y2 = torch.matmul(x2, weight2)
                 y2 = y2.sum()
                 y2.backward()  # 执行反向传播
@@ -228,7 +228,7 @@ def test_backward_pass_not_captured():
 
 
 def test_nested_dump_contexts():
-    """测试嵌套 dump 上下文 - 每个 ops_dump 创建独立 session"""
+    """测试嵌套 dump 上下文 - 每个 acc_dump 创建独立 session"""
     print("=" * 60)
     print("Test: Nested dump contexts")
     print("=" * 60)
@@ -237,10 +237,10 @@ def test_nested_dump_contexts():
         with tempfile.TemporaryDirectory() as tmpdir_inner:
             x = torch.randn(3, 3)
 
-            with ops_dump(tmpdir_outer) as outer_dumper:
+            with acc_dump(tmpdir_outer) as outer_dumper:
                 y1 = x + 1
 
-                with ops_dump(tmpdir_inner) as inner_dumper:
+                with acc_dump(tmpdir_inner) as inner_dumper:
                     y2 = y1 * 2
                     y3 = torch.sin(y2)
 
@@ -273,7 +273,7 @@ def test_backward_detailed_check():
         x = torch.randn(3, 5, requires_grad=True)
         weight = torch.randn(5, 10, requires_grad=True)
 
-        with ops_dump(tmpdir) as dumper:
+        with acc_dump(tmpdir) as dumper:
             y = torch.matmul(x, weight)
             y = y.sum()
             y.backward()
@@ -319,8 +319,8 @@ def test_backward_detailed_check():
 
 
 if __name__ == "__main__":
-    test_custom_module_ops_dump()
-    test_custom_function_ops_dump()
+    test_custom_module_acc_dump()
+    test_custom_function_acc_dump()
     test_nested_custom_calls()
     test_backward_pass_not_captured()
     test_nested_dump_contexts()

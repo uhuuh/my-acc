@@ -1,5 +1,5 @@
 """
-Test ops_dump with various PyTorch custom operator registration methods.
+Test acc_dump with various PyTorch custom operator registration methods.
 
 Tests that operators called inside custom operators are captured correctly.
 """
@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import torch
 import tempfile
 import json
-from acc import ops_dump
+from acc import acc_dump
 
 
 def get_keys_from_dump(session_dir):
@@ -60,7 +60,7 @@ def test_torch_library_explicit_autograd():
         a = torch.randn(3, 3)
         b = torch.randn(3, 3)
 
-        with ops_dump(tmpdir) as dumper:
+        with acc_dump(tmpdir) as dumper:
             result = torch.ops.explicit_ops.custom_add(a, b)
 
         dump_dirs = [d for d in os.listdir(tmpdir) if os.path.isdir(os.path.join(tmpdir, d))]
@@ -118,7 +118,7 @@ def test_torch_library_implicit_autograd():
         with tempfile.TemporaryDirectory() as tmpdir:
             x = torch.randn(3, 3)
 
-            with ops_dump(tmpdir) as dumper:
+            with acc_dump(tmpdir) as dumper:
                 result = torch.ops.implicit_ops.custom_transform(x)
 
             dump_dirs = [d for d in os.listdir(tmpdir) if os.path.isdir(os.path.join(tmpdir, d))]
@@ -179,7 +179,7 @@ def test_autograd_function():
         y = torch.randn(3, 3, requires_grad=True)
 
         # 测试前向传播
-        with ops_dump(tmpdir) as dumper:
+        with acc_dump(tmpdir) as dumper:
             z = CustomAutogradFunction.apply(x, y)
             z = z.sum()
             z.backward()
@@ -223,7 +223,7 @@ def test_torchjit_script():
         x = torch.randn(3, 3)
         y = torch.randn(3, 3)
 
-        with ops_dump(tmpdir) as dumper:
+        with acc_dump(tmpdir) as dumper:
             result = scripted_function(x, y)
 
         dump_dirs = [d for d in os.listdir(tmpdir) if os.path.isdir(os.path.join(tmpdir, d))]
@@ -271,7 +271,7 @@ def test_custom_module():
         module = CustomModule()
         x = torch.randn(3, 5)
 
-        with ops_dump(tmpdir) as dumper:
+        with acc_dump(tmpdir) as dumper:
             result = module(x)
 
         dump_dirs = [d for d in os.listdir(tmpdir) if os.path.isdir(os.path.join(tmpdir, d))]
@@ -317,7 +317,7 @@ def test_nested_custom_calls():
     with tempfile.TemporaryDirectory() as tmpdir:
         x = torch.randn(3, 3)
 
-        with ops_dump(tmpdir) as dumper:
+        with acc_dump(tmpdir) as dumper:
             result = outer_custom_function(x)
 
         dump_dirs = [d for d in os.listdir(tmpdir) if os.path.isdir(os.path.join(tmpdir, d))]
@@ -358,7 +358,7 @@ def test_custom_loop():
     with tempfile.TemporaryDirectory() as tmpdir:
         x = torch.randn(3, 3)
 
-        with ops_dump(tmpdir) as dumper:
+        with acc_dump(tmpdir) as dumper:
             result = custom_loop_function(x, iterations=3)
 
         dump_dirs = [d for d in os.listdir(tmpdir) if os.path.isdir(os.path.join(tmpdir, d))]
@@ -403,7 +403,7 @@ def test_custom_conditional():
     with tempfile.TemporaryDirectory() as tmpdir:
         x = torch.randn(3, 3)
 
-        with ops_dump(tmpdir) as dumper:
+        with acc_dump(tmpdir) as dumper:
             result_true = custom_conditional_function(x, condition=True)
 
         dump_dirs = [d for d in os.listdir(tmpdir) if os.path.isdir(os.path.join(tmpdir, d))]
@@ -418,7 +418,7 @@ def test_custom_conditional():
     with tempfile.TemporaryDirectory() as tmpdir:
         x = torch.randn(3, 3)
 
-        with ops_dump(tmpdir) as dumper:
+        with acc_dump(tmpdir) as dumper:
             result_false = custom_conditional_function(x, condition=False)
 
         dump_dirs = [d for d in os.listdir(tmpdir) if os.path.isdir(os.path.join(tmpdir, d))]

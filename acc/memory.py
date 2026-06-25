@@ -64,7 +64,7 @@ class NativeMemoryAllocator(MemoryAllocator):
 
     def acquire(self, tensor: torch.Tensor) -> torch.Tensor:
         self._acquire_total += 1
-        block = torch.empty_like(tensor).cpu()
+        block = torch.empty_like(tensor, device='cpu')
         self._allocated_bytes += block.numel() * block.element_size()
         self._check_monitor()
         return block
@@ -180,7 +180,7 @@ class Storage:
             t = torch.from_numpy(obj).contiguous()
         else:
             t = obj.detach().contiguous()
-        self.cache_id: str = f"ptr_{t.data_ptr()}_{t.numel()}_{t._version}"
+        self.cache_id: str = f"ptr_{t.data_ptr()}_{t._version}_{t.numel()}"
 
     def materialize(self, allocator: MemoryAllocator) -> torch.Tensor:
         """Acquire pinned memory, copy tensor to CPU, return storage tensor."""

@@ -1,7 +1,7 @@
 # AGENTS.md — my-acc (PyTorch Operator Dump Tool)
 
 ## Quick start
-- No setup.py/pyproject.toml — install via `pip install -e .` (uses implicit discovery)
+- `pyproject.toml` — install via `pip install -e .`
 - No lint/typecheck/formatter config — run only `pytest tests/`
 - Dependencies: torch 2.9.1+, numpy, pytest
 
@@ -19,13 +19,13 @@
 - `weights_only=False` is required for `torch.load` (PyTorch 2.6+ safe-mode default blocks custom classes)
 
 ## Architecture
-- `acc/__init__.py` exports: `ops_dump`, `ops_comp`, `OperatorRecord`, `SerializationSender`, `SerializationReceiver`, `load_metadata`, `load_data`, `IOWriter`, `CacheEntry`, `CacheManager`, `resolve_cache_entry`, `resolve_cache_entries`
-- `dump.py`: `ops_dump` context manager / decorator → patches `torch.library.impl` + wraps operators via `TorchDispatchMode`; creates SerializationSender (main process) + spawns SerializationReceiver (subprocess)
+- `acc/__init__.py` exports: `acc_dump`, `acc_comp`, `OperatorRecord`, `SerializationSender`, `SerializationReceiver`, `load_metadata`, `load_data`, `IOWriter`, `CacheEntry`, `CacheManager`, `resolve_cache_entry`, `resolve_cache_entries`
+- `main.py`: `acc_dump` context manager → creates Capturer + Manager
 - `memory.py`: `PinMemoryAllocator` base, `NaiveAllocator`, `AdvancedAllocator` (free-list buckets by size), `Storage` (compute cache_id + materialize via allocator)
 - `cache.py`: `CacheEntry` dataclass, `CacheManager` (tracks cache_id set, owns PinMemoryPool, writes .pt via cache IOWriter), `resolve_cache_entry` / `resolve_cache_entries` for loading
 - `serialization.py`: `SerializationSender` (transforms tensors via CacheManager, queues data), `SerializationReceiver` (subprocess target, writes .json/.pkl via seq IOWriter), `OperatorRecord`, `load_metadata`, `load_data`
 - `io.py`: `IOWriter` with `name` attribute ("cache"/"seq"), `FileHandler` with module-level handler functions (pickle-safe for spawn)
-- `comp.py`: `ops_comp` → LCS matching between two dump sessions, uses `load_metadata`/`load_data`
+- `comp.py`: `acc_comp` → LCS matching between two dump sessions, uses `load_metadata`/`load_data`
 - `formatting.py`: display helpers
 - `comparators.py`: per-operator comparison logic
 
@@ -38,7 +38,7 @@
 ## Config
 - `acc/config.py` — centralized config via `config.init()` and `config.get_*()` functions
 - `config.init()` sets env vars (`ACC_DUMP_PATH`, `ACC_DUMP_ENABLED`, `ACC_MAX_TENSOR_SIZE_MB`); conflicts print a warning
-- `ops_dump.__init__` calls `config.init()`; all modules read via config getters
+- `acc_dump.__init__` calls `config.init()`; all modules read via config getters
 - `ACC_DUMP_PATH=<path>`: required (via arg or env var)
 - `ACC_DUMP_ENABLED=0` disables all dump capture globally
 - `my/` directory is gitignored — user-specific output/analysis files
@@ -47,4 +47,4 @@
 - No type annotations enforced — code uses minimal typing
 - Custom classes like `CacheEntry` are serialized in `.pkl` files — `torch.load` must use `weights_only=False`
 - Tests write to temp dirs via `tempfile.TemporaryDirectory` — no test artifacts persist
-- `torch.library.impl` patching is done globally on import of `dump.py` — side-effect if imported twice
+- `torch.library.impl` patching is done globally on import of `capturer.py` (OpsCapturer) — side-effect if imported twice

@@ -1,73 +1,87 @@
 # PyTorch Operator Dump Tool
 
-A tool for capturing and comparing PyTorch operator calls with input/output tensors.
+Capture and inspect PyTorch operator calls with input/output tensors.
 
-## Dump Ops Data
+## Install
 
 ```bash
 pip install -e .
 ```
 
-```python
-from acc import ops_dump
+## acc_dump — Capture Operators
 
-# Context manager mode
-with ops_dump("/path/to/dumps"):
+```python
+from acc import acc_dump
+
+with acc_dump("/path/to/dumps"):
     model(input)
 ```
 
 ### Backends
 
-Two capture backends are available, configured via `capturer_backends`:
+| Backend | Description |
+|---|---|
+| `ops` (default) | Captures every PyTorch operator via `TorchDispatchMode` |
+| `module` (default) | Captures module forward calls via `register_forward_hook`; requires `model=` |
 
 ```python
-from acc import ops_dump
-
-# Default: ops only
-with ops_dump("/path/to/dumps"):
-    model(input)
-
 # Ops + module forward hooks
-with ops_dump("/path/to/dumps", model=model):
+with acc_dump("/path/to/dumps", model=model):
+    model(input)
+
+# Ops only
+with acc_dump("/path/to/dumps", capturer_backends="ops"):
     model(input)
 ```
 
-- `ops` (default) — captures every PyTorch operator via `TorchDispatchMode`
-- `module` (default) — captures module forward calls via `register_forward_hook`; requires passing `model=`
+### Output files
 
-Control via config or env var:
+Each captured operator produces two files:
 
-```python
-from acc.config import config
-config.update(capturer_backends="ops")         # ops only
-# or: ACC_CAPTURER_BACKENDS=ops,module
-```
+- `<save_id>.json` — metadata (seq, file, func, lineno, call stack)
+- `<save_id>.pkl` — serialized inputs/outputs as `CacheEntry` references
 
-## Comparing Two Dumps
+Unique tensors are deduplicated to `cache/<cache_id>.pt`.
+
+## acc_info — Inspect a Dump
 
 ```python
-from acc import ops_comp
+from acc import acc_info
 
-ops_comp("/path/to/dump_a", "/path/to/dump_b")
+# Print all operator inputs/outputs
+acc_info("/path/to/dumps")
+
+# Filter: keep only conv2d ops
+acc_info("/path/to/dumps", filter_fn=lambda r: "conv2d" not in r.key)
 ```
 
-Prints LCS-matched operator sequence, then detailed per-operator comparison of inputs, kwargs, and outputs.
+`filter_fn(record) -> bool` — return `True` to skip a record.
 
-### Custom LCS key function
+For each operator, prints kwargs and outputs. Tensors and numpy arrays show shape, dtype, max, min, mean, MSE, and quartiles.
 
-Control how operators are matched by passing `key_fn`:
+## acc_comp — Compare Two Dumps
 
 ```python
-from acc import ops_comp
+from acc import acc_comp
 
-# Match only by operator/module key (ignore filename/capturer)
-ops_comp(a, b, key_fn=lambda is_left, r: r.key)
-
-# Custom: match by filename + key
-ops_comp(a, b, key_fn=lambda is_left, r: f"{r.filename}:{r.key}")
+acc_comp("/path/to/dump_a", "/path/to/dump_b")
 ```
 
-`key_fn(is_left: bool, record: OperatorRecord) -> str` takes a boolean indicating which side (`True` for A, `False` for B) and the record, returns the matching key. Default prepends the capturer type: `f"{r.capturer}:{r.filename}::{r.key}"`.
+Prints LCS-matched operator sequence with per-operator tensor comparison.
+
+### Custom matching
+
+```python
+# Match only by operator key (ignore filename/capturer)
+acc_comp(a, b, key_fn=lambda is_left, r: r.key)
+
+# Filter: compare only conv2d ops
+acc_comp(a, b, filter_fn=lambda is_left, r: "conv2d" not in r.key)
+```
+
+`key_fn(is_left: bool, record: OperatorRecord) -> str` — custom LCS matching key. Default: `f"{r.capturer}:{r.filename}::{r.key}"`.
+
+`filter_fn(is_left: bool, record: OperatorRecord) -> bool` — return `True` to exclude a record from comparison.
 
 ## License
 

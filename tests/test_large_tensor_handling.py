@@ -10,7 +10,7 @@ import torch
 import tempfile
 import json
 import pickle
-from acc import ops_dump
+from acc import acc_dump
 from acc.config import config
 from acc.cache import CacheEntry
 
@@ -23,7 +23,7 @@ def test_large_tensor_replaced_with_none():
 
     with tempfile.TemporaryDirectory() as tmpdir:
         config.update(max_tensor_size_mb=1)
-        with ops_dump(tmpdir) as dumper:
+        with acc_dump(tmpdir) as dumper:
             # Create a tensor larger than 1MB
             # float32 = 4 bytes, so 256*256*256 = 16MB
             large_tensor = torch.randn(256, 256, 256)
@@ -98,7 +98,7 @@ def test_contiguous_error_handling():
     with tempfile.TemporaryDirectory() as tmpdir:
         os.environ['ACC_MAX_TENSOR_SIZE_MB'] = '1'
         try:
-            with ops_dump(tmpdir) as dumper:
+            with acc_dump(tmpdir) as dumper:
                 # Create a normal tensor (should work fine)
                 normal_tensor = torch.randn(10, 10)
                 result = normal_tensor + 1

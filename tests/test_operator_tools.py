@@ -1,7 +1,7 @@
 """
 Test script for acc package.
 
-Tests basic functionality of ops_dump and ops_comp.
+Tests basic functionality of acc_dump and acc_comp.
 """
 
 import sys
@@ -10,19 +10,19 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch
 import tempfile
-from acc import ops_dump, ops_comp
+from acc import acc_dump, acc_comp
 
 
-def test_ops_dump_context_manager():
-    """Test ops_dump as context manager."""
+def test_acc_dump_context_manager():
+    """Test acc_dump as context manager."""
     print("=" * 60)
-    print("Test 1: ops_dump as context manager")
+    print("Test 1: acc_dump as context manager")
     print("=" * 60)
     
     # Create temp directory for dumps
     with tempfile.TemporaryDirectory() as tmpdir:
         # Test context manager
-        with ops_dump(tmpdir) as dumper:
+        with acc_dump(tmpdir) as dumper:
             # Create some tensors and operations
             a = torch.randn(32, 64)
             b = torch.randn(64, 128)
@@ -45,10 +45,10 @@ def test_ops_dump_context_manager():
     print("\nPASS: Test 1 passed\n")
 
 
-def test_ops_comp():
-    """Test ops_comp function."""
+def test_acc_comp():
+    """Test acc_comp function."""
     print("=" * 60)
-    print("Test 3: ops_comp")
+    print("Test 3: acc_comp")
     print("=" * 60)
     
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -59,14 +59,14 @@ def test_ops_comp():
         os.makedirs(dump_dir_b)
         
         # First session (A)
-        with ops_dump(dump_dir_a) as dumper:
+        with acc_dump(dump_dir_a) as dumper:
             a1 = torch.randn(32, 64)
             b1 = torch.randn(64, 128)
             c1 = torch.matmul(a1, b1)
             d1 = torch.relu(c1)
         
         # Second session (B) - same ops but different values
-        with ops_dump(dump_dir_b) as dumper:
+        with acc_dump(dump_dir_b) as dumper:
             a2 = torch.randn(32, 64)
             b2 = torch.randn(64, 128)
             c2 = torch.matmul(a2, b2)
@@ -83,7 +83,7 @@ def test_ops_comp():
         print("-" * 60)
         
         # Compare dumps
-        ops_comp(session_a_path, session_b_path)
+        acc_comp(session_a_path, session_b_path)
     
     print("\nPASS: Test 3 passed\n")
 
@@ -96,13 +96,13 @@ def main():
     
     # Test import first
     print("Testing import...")
-    print(f"  ops_dump: {ops_dump}")
-    print(f"  ops_comp: {ops_comp}")
+    print(f"  acc_dump: {acc_dump}")
+    print(f"  acc_comp: {acc_comp}")
     print("PASS: Import successful\n")
     
     # Run tests
-    test_ops_dump_context_manager()
-    test_ops_comp()
+    test_acc_dump_context_manager()
+    test_acc_comp()
     
     print("=" * 60)
     print("All tests passed!")
