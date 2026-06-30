@@ -180,7 +180,12 @@ class Storage:
             t = torch.from_numpy(obj).contiguous()
         else:
             t = obj.detach().contiguous()
-        self.cache_id: str = f"ptr_{t.data_ptr()}_{t._version}_{t.numel()}"
+        if torch.is_inference_mode_enabled():
+            print("[WARN] tensor in inference mode does not track version, using version=0")
+            version = 0
+        else:
+            version = t._version
+        self.cache_id: str = f"ptr_{t.data_ptr()}_{version}_{t.numel()}"
 
     def materialize(self, allocator: MemoryAllocator) -> torch.Tensor:
         """Acquire pinned memory, copy tensor to CPU, return storage tensor."""

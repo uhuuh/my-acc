@@ -244,32 +244,43 @@ def acc_info(dump_dir, filter_fn=None):
     """Print operator info from a dump session.
 
     Args:
-        dump_dir: Path to the dump session directory.
+        dump_dir: Path to the dump session directory, or a single .json file.
         filter_fn: Optional callable(record) -> bool.
             Return True to skip (filter out) the record before printing.
     """
-    records = _load_all_metadata(dump_dir, filter_fn=filter_fn)
+    if os.path.isfile(dump_dir):
+        if not dump_dir.endswith('.json'):
+            print(f"[ERROR] expected a .json file, got: {dump_dir}")
+            return
+        records = [Serializer.load_metadata(dump_dir)]
+        base = os.path.dirname(dump_dir)
+    else:
+        records = _load_all_metadata(dump_dir, filter_fn=filter_fn)
+        base = dump_dir
     total = len(records)
     print(f"[INFO] {total} operators loaded from {dump_dir}")
 
     for idx, record in enumerate(records, 1):
         print(f"[INFO {idx}/{total}] {record.save_id}")
 
-        pkl_path = os.path.join(dump_dir, f"{record.save_id}.pkl")
-        storage = os.path.join(dump_dir, 'storage')
+        pkl_path = os.path.join(base, f"{record.save_id}.pkl")
+        storage = os.path.join(base, 'storage')
         try:
             inputs, outputs = Serializer.load_data(pkl_path, storage)
         except Exception as e:
             print(f"  [ERROR] failed to load data: {e}")
             continue
 
+        args = inputs.get('args', [])
+        if args:
+            for i, v in enumerate(args):
+                print(f"args [{i}]: {_format_val(v)}")
+
         kwargs = inputs.get('kwargs', {})
         if kwargs:
-            print("  kwargs:")
             for k, v in kwargs.items():
-                print(f"    {k}: {_format_val(v)}")
+                print(f"kwargs [{k}]: {_format_val(v)}")
 
         if outputs:
-            print("  outputs:")
             for i, v in enumerate(outputs):
-                print(f"    [{i}]: {_format_val(v)}")
+                print(f"outputs [{i}]: {_format_val(v)}")
