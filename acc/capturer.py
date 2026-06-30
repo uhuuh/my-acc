@@ -1,8 +1,58 @@
 """Capturer with pluggable backends: OpsCapturer (TorchDispatchMode) and ModuleCapturer (forward hooks)."""
 
+import functools
 import torch
 from torch.utils._python_dispatch import TorchDispatchMode
 
+
+# ═══════════════════════════════════════════════════════════════════════
+# Module-level: patch Library.__getattribute__ so that impl / _register_fake
+# are intercepted on EVERY Library instance, regardless of when it was
+# created (before or after this module is imported).
+#
+# On each access, a wrapper is returned that auto-wraps the kernel function
+# to re-enter TorchDispatchMode. Without this, the C++ dispatcher pops
+# TorchDispatchMode before calling CPU/CUDA kernels.
+#
+# The wrapper is a no-op when _active_instance is None, so there is zero
+# overhead when no acc_dump is active.
+#
+# Covers both APIs with a single patch:
+#   my_lib.impl(op, fn, "CPU")          → Library.__getattribute__ → wrapped
+#   torch.library.impl("ns::op", "CPU") → _impl → use_lib.impl()  → same path
+# ═══════════════════════════════════════════════════════════════════════
+
+def _kernel_wrapper(fn):
+    """Wrap a kernel so it re-enters the active TorchDispatchMode."""
+    @functools.wraps(fn)
+    def wrapped(*args, **kwargs):
+        if OpsCapturer._active_instance is None:
+            return fn(*args, **kwargs)
+        with OpsCapturer._active_instance:
+            return fn(*args, **kwargs)
+    return wrapped
+
+
+_WRAPPED_METHODS = frozenset({'impl', '_register_fake'})
+
+if hasattr(torch.library, 'Library'):
+    _original_library_getattribute = torch.library.Library.__getattribute__
+    print("[DUMP PATCH] Installing Library.__getattribute__ patch")
+
+    def _patched_getattribute(self, name):
+        attr = _original_library_getattribute(self, name)
+        if name in _WRAPPED_METHODS:
+            original_bound = attr  # already bound to self
+            @functools.wraps(original_bound)
+            def wrapper(op_name, fn, *args, **kwargs):
+                return original_bound(op_name, _kernel_wrapper(fn), *args, **kwargs)
+            return wrapper
+        return attr
+
+    torch.library.Library.__getattribute__ = _patched_getattribute
+
+
+# ═══════════════════════════════════════════════════════════════════════
 
 class Capturer:
     """Facade: manages multiple capture backends internally.
@@ -55,44 +105,13 @@ class Capturer:
 class OpsCapturer(TorchDispatchMode):
     """Captures PyTorch operators via TorchDispatchMode."""
 
-    _original_impl = None
-    _patch_installed = False
     _active_instance = None
-
-    @classmethod
-    def _install_impl_patch(cls):
-        if cls._patch_installed:
-            return
-        if not hasattr(torch.library, 'impl'):
-            return
-        cls._original_impl = torch.library.impl
-        cls._patch_installed = True
-        print("[DUMP PATCH] Installing torch.library.impl patch")
-
-        def patched_impl(qualname, types, func=None, *, lib=None):
-            def wrap(f):
-                def wrapped(*args, **kwargs):
-                    if cls._active_instance is None:
-                        return f(*args, **kwargs)
-                    with cls._active_instance:
-                        return f(*args, **kwargs)
-                return wrapped
-
-            if func is None:
-                def decorator(f):
-                    return cls._original_impl(qualname, types, wrap(f), lib=lib)
-                return decorator
-            else:
-                return cls._original_impl(qualname, types, wrap(func), lib=lib)
-
-        torch.library.impl = patched_impl
 
     def __init__(self):
         super().__init__()
         self._handler = None
         self._in_dispatch = False
         self._enabled = True
-        self._install_impl_patch()
 
     def start(self, handler):
         from .config import config

@@ -80,7 +80,7 @@ Config: `config.update(memory_allocator="pin")` or env `ACC_MEMORY_ALLOCATOR=pin
 
 - AGENTS.md is the authoritative dev reference (out of date relative to current code — verifies against source).
 - `torch.load(weights_only=False)` is required throughout because `.pt` files contain custom dataclasses (`CacheEntry`) — PyTorch 2.6+ safe-mode blocks this by default.
-- `torch.library.impl` is globally patched on `OpsCapturer` init to re-enter `__torch_dispatch__` from custom ops.
+- `torch.library.Library.impl` and `torch.library.impl` are patched at module level (on `import acc`) via `_kernel_wrapper` to re-enter `__torch_dispatch__` from custom ops. The wrapper is a no-op when no `acc_dump` is active.
 - The `my/` directory is gitignored for user-specific output/analysis.
 - Tests write to `tempfile.TemporaryDirectory` — no artifacts persist.
 - Tests import via `sys.path.insert(0, ...)` hack (in each test file header), not via the installed package.

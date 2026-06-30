@@ -32,13 +32,15 @@ def get_keys_from_dump(session_dir):
 
 def test_torch_library_explicit_autograd():
     """
-    Test CompositeExplicitAutograd operator - internal ops ARE captured now.
+    Test CompositeExplicitAutograd operator - internal ops ARE captured.
 
-    After implementing the wrap approach, all custom operators (regardless of
-    dispatch key) will capture internal operators via nested dispatch mode.
+    With the eager _kernel_wrapper patch installed at module level,
+    ALL dispatch keys (including CompositeExplicitAutograd) get their
+    kernel functions wrapped to re-enter TorchDispatchMode, making
+    internal ops visible.
     """
     print("=" * 60)
-    print("Test 1: torch.library CompositeExplicitAutograd (Wrapped)")
+    print("Test 1: torch.library CompositeExplicitAutograd (wrapped)")
     print("=" * 60)
 
     try:
@@ -69,18 +71,18 @@ def test_torch_library_explicit_autograd():
 
         print(f"Captured {len(keys)} operators: {keys}")
 
-        assert len(keys) >= 4, "Should capture at least 4 operators (add, mul, relu, custom)"
-
         custom_op_found = any('custom_add' in op.lower() for op in keys)
-        print(f"Custom operator captured: {custom_op_found}")
+        assert custom_op_found, "Expected custom_add to be captured"
+        print(f"PASS: Custom operator captured: {custom_op_found}")
 
+        # Eager patch wraps all kernels → internal ops (add, mul, relu) visible
         expected_ops = ['add', 'mul', 'relu']
         for expected in expected_ops:
             found = any(expected in op.lower() for op in keys)
             assert found, f"Expected {expected} operator not found"
             print(f"PASS: Found {expected}")
 
-        print("PASS: CompositeExplicitAutograd internal operators captured via wrap\n")
+        print("PASS: CompositeExplicitAutograd test completed (internal ops now visible)\n")
 
 
 # ============================================================
