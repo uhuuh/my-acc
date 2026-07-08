@@ -1,47 +1,110 @@
-"""Centralized config: dataclass singleton, init from env, update via kwargs."""
-from dataclasses import dataclass
+"""Per-session configuration for acc_dump."""
+
 import os
+import uuid
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
 
-@dataclass
+from loguru import logger
+
+
+DEFAULTS = {
+    "dump_path": "",
+    "dump_enabled": True,
+    "capturer_backends": "ops,module",
+    "hash_workers": None,
+    "cache_write_workers": None,
+}
+
+_CONFIG_FIELDS = frozenset(DEFAULTS)
+_AUTO_FIELDS = {
+    "hash_workers",
+    "cache_write_workers",
+}
+
+
+@dataclass(init=False)
 class Config:
-    dump_path: str = "."
-    dump_enabled: bool = True
-    max_tensor_size_mb: int = 10240
-    io_monitor_interval: float = 1.0
-    cache_monitor_interval: float = 1.0
-    pool_monitor_interval: float = 1.0
-    memory_allocator: str = "native"
-    serializer_kind: str = "sync"
-    capturer_backends: str = "ops,module"
-    async_io: bool = True
-    async_serialization: bool = True
+    """Config resolved once per acc_dump session.
 
-    def __post_init__(self):
-        annotations = type(self).__annotations__
-        for name, var_type in annotations.items():
-            key = f"ACC_{name.upper()}"
-            val = os.environ.get(key)
-            if val is None:
-                continue
-            if var_type is bool:
-                setattr(self, name, val.lower() not in ('0', 'false', 'no', 'off'))
-            elif var_type is int:
-                setattr(self, name, int(val))
-            elif var_type is float:
-                setattr(self, name, float(val))
-            else:
-                setattr(self, name, val)
+    Expensive performance knobs default to ``auto``. Callers can still override
+    them through kwargs or ACC_* environment variables.
+    """
 
-    def update(self, **kwargs):
-        annotations = type(self).__annotations__
+    dump_path: str
+    dump_enabled: bool
+    capturer_backends: str
+    hash_workers: int
+    cache_write_workers: int
+    dump_dir: str
+
+    def __init__(self, dump_path=None, **kwargs):
+        values = dict(DEFAULTS)
+
+        for name, default in DEFAULTS.items():
+            env_value = os.environ.get(f"ACC_{name.upper()}")
+            if env_value is not None:
+                values[name] = _coerce_value(env_value, default, name)
+
+        if dump_path is not None:
+            values["dump_path"] = dump_path
+
         for name, value in kwargs.items():
-            if name not in annotations:
-                print(f"[CONFIG WARN] Unknown config '{name}', skipping")
+            if name not in DEFAULTS:
+                logger.warning(f"[Config] unknown option '{name}', ignoring")
                 continue
-            old_value = getattr(self, name, None)
-            if old_value != value:
-                print(f"[CONFIG] {name}: {old_value} -> {value}")
-                setattr(self, name, value)
-                os.environ[f"ACC_{name.upper()}"] = str(value)
+            values[name] = value
 
-config = Config()
+        _resolve_auto_values(values)
+
+        for name, value in values.items():
+            setattr(self, name, value)
+
+        self.dump_dir = _make_dump_dir(self.dump_path)
+        self._log(values)
+
+    def _log(self, values: dict):
+        logger.info("=== ACC Config ===")
+        for name in DEFAULTS:
+            logger.info(f"  {name} = {values[name]}")
+        logger.info(f"  dump_dir = {self.dump_dir}")
+
+
+def _coerce_value(value: str, default: Any, name: str):
+    if name in _AUTO_FIELDS and value.lower() in ("", "auto", "none"):
+        return None
+    if isinstance(default, bool):
+        return value.lower() not in ("0", "false", "no", "off")
+    if isinstance(default, int) or (default is None and name in _AUTO_FIELDS):
+        return int(value)
+    if isinstance(default, float):
+        return float(value)
+    return value
+
+
+def _resolve_auto_values(values: dict):
+    cpu_count = os.cpu_count() or 4
+
+    auto_workers = min(4, max(1, cpu_count // 2))
+    for name in _AUTO_FIELDS:
+        values[name] = int(
+            auto_workers if values[name] is None else values[name]
+        )
+
+
+def _make_dump_dir(base_path: str) -> str:
+    base = base_path or "_acc_dump"
+    rank = "None"
+    try:
+        import torch.distributed as dist
+
+        if dist.is_initialized():
+            rank = dist.get_rank()
+    except Exception:
+        pass
+
+    pid = os.getpid()
+    ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    sid = uuid.uuid4().hex[:8]
+    return os.path.join(base, f"{rank}-{pid}-{ts}-{sid}")

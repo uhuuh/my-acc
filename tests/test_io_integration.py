@@ -2,33 +2,41 @@
 import os
 import tempfile
 from acc import acc_dump
-from acc.config import config
 
 
 def test_acc_dump_creates_files():
-    """Test acc_dump creates session files via sender/receiver pipeline."""
+    """Test acc_dump creates the append-only record and tensor stores."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        with acc_dump(tmpdir) as dumper:
+        with acc_dump(dump_path=tmpdir):
             import torch
             a = torch.randn(2, 3)
             _ = a + 1
 
-        dump_dirs = [d for d in os.listdir(tmpdir) if os.path.isdir(os.path.join(tmpdir, d))]
+        dump_dirs = [
+            d for d in os.listdir(tmpdir)
+            if os.path.isdir(os.path.join(tmpdir, d))
+        ]
         assert len(dump_dirs) > 0
         session_dir = os.path.join(tmpdir, dump_dirs[0])
-        json_files = [f for f in os.listdir(session_dir) if f.endswith('.json')]
-        assert len(json_files) > 0
+        assert os.path.getsize(os.path.join(session_dir, "records.jsonl")) > 0
+        assert os.path.getsize(
+            os.path.join(session_dir, "tensor_locations.jsonl")
+        ) > 0
 
 
 def test_acc_dump_disabled_no_files():
     """Test acc_dump with dump_enabled=False creates no files."""
+    import os
     with tempfile.TemporaryDirectory() as tmpdir:
-        config.update(dump_enabled=False)
-        with acc_dump(tmpdir) as dumper:
+        os.environ["ACC_DUMP_ENABLED"] = "0"
+        with acc_dump(dump_path=tmpdir):
             import torch
             a = torch.randn(2, 3)
             _ = a + 1
-        config.update(dump_enabled=True)
+        os.environ.pop("ACC_DUMP_ENABLED")
 
-        dump_dirs = [d for d in os.listdir(tmpdir) if os.path.isdir(os.path.join(tmpdir, d))]
+        dump_dirs = [
+            d for d in os.listdir(tmpdir)
+            if os.path.isdir(os.path.join(tmpdir, d))
+        ]
         assert len(dump_dirs) == 0

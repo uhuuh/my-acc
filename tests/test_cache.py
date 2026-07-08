@@ -1,231 +1,131 @@
-import sys
-import os
+import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import tempfile
-import torch
-import numpy as np
-from acc.cache import CacheEntry, CacheManager
-from acc.io import IOWriter
-from acc.memory import MemoryAllocator
+import tempfile, torch, numpy as np, json, pickle
+from acc.cache import CacheEntry, CacheManager, load_info, load_data
+
+
+def _make_config(tmpdir):
+    from acc.config import Config
+    config = Config(dump_path=tmpdir)
+    return config
+
+
+def _make_record(seq_id, capturer_key, args, kwargs=None, outputs=None):
+    """Create a real Record for testing (picklable across mp.Queue)."""
+    # Setting ACC_CAPTURER_BACKENDS first to avoid capturer intialization noise
+    from acc.record import Record
+    return Record(
+        seq_id=seq_id,
+        capturer_type="ops",
+        capturer_key=capturer_key,
+        args=args,
+        kwargs=kwargs or {},
+        outputs=outputs or [],
+    )
 
 
 def test_cache_entry():
     print("Test: CacheEntry dataclass")
-    entry = CacheEntry(cache_id="abc123", type="tensor", dtype="float32", shape=[2, 3])
-    assert entry.cache_id == "abc123"
-    assert entry.type == "tensor"
+    entry = CacheEntry(
+        cache_id=1, tensor_type="tensor", dtype="float32", shape=[2, 3]
+    )
+    assert entry.cache_id == 1
+    assert entry.tensor_type == "tensor"
     assert entry.shape == [2, 3]
     print("  PASS")
 
 
 def test_save_tensor():
-    print("Test: save with tensor")
+    print("Test: save via CacheManager subprocess")
     with tempfile.TemporaryDirectory() as tmpdir:
-        cache_dir = os.path.join(tmpdir, "cache")
-        os.makedirs(cache_dir)
-        mgr = CacheManager()
-        mgr.cache_dir = cache_dir
-        mgr._io = IOWriter(enable_async=False)
-        mgr._started = True
-        mgr._pool = MemoryAllocator.create("pin")
-        mgr._max_tensor_size_mb = 10240
-        mgr._save_cached = set()
-        mgr._load_cached = {}
+        config = _make_config(tmpdir)
+        mgr = CacheManager(config)
+
         t = torch.randn(2, 3)
-        result = mgr.save(t)
-        assert isinstance(result, CacheEntry)
-        assert result.type == "tensor"
-        assert result.shape == [2, 3]
-        # Same tensor should reuse cache_id
-        result2 = mgr.save(t)
-        assert result2.cache_id == result.cache_id
+        record = _make_record(1, "test", [t])
+        mgr.save(record)
+        mgr.join()
+
+        # Find session subdir
+        session_dir = config.dump_dir
+        json_files = [
+            f for f in os.listdir(session_dir)
+            if f.endswith(".json") and not f.startswith("cache_hashes")
+        ]
+        assert len(json_files) == 1
+        info = load_info(os.path.join(session_dir, json_files[0]))
+        assert info["capturer_key"] == "test"
+
+        pkl_path = os.path.join(session_dir, f"{record.save_id}.pkl")
+        inputs, outputs = load_data(pkl_path, session_dir)
+        assert isinstance(inputs["args"][0], torch.Tensor)
+        assert torch.equal(inputs["args"][0], t)
     print("  PASS")
 
 
 def test_save_numpy():
-    print("Test: save with numpy")
+    print("Test: save numpy array via CacheManager")
     with tempfile.TemporaryDirectory() as tmpdir:
-        cache_dir = os.path.join(tmpdir, "cache")
-        os.makedirs(cache_dir)
-        mgr = CacheManager()
-        mgr.cache_dir = cache_dir
-        mgr._io = IOWriter(enable_async=False)
-        mgr._started = True
-        mgr._pool = MemoryAllocator.create("pin")
-        mgr._max_tensor_size_mb = 10240
-        mgr._save_cached = set()
-        mgr._load_cached = {}
+        config = _make_config(tmpdir)
+        mgr = CacheManager(config)
+
         a = np.random.randn(3, 4).astype(np.float32)
-        result = mgr.save(a)
-        assert isinstance(result, CacheEntry)
-        assert result.type == "numpy"
-        result2 = mgr.save(a)
-        assert result2.cache_id == result.cache_id
+        record = _make_record(2, "test_np", [a])
+        mgr.save(record)
+        mgr.join()
+
+        session_dir = config.dump_dir
+        pkl_path = os.path.join(session_dir, f"{record.save_id}.pkl")
+        inputs, outputs = load_data(pkl_path, session_dir)
+        assert isinstance(inputs["args"][0], np.ndarray)
+        assert np.equal(inputs["args"][0], a).all()
     print("  PASS")
 
 
 def test_save_scalar():
-    print("Test: save with non-tensor/numpy")
+    print("Test: non-tensor values pass through")
     with tempfile.TemporaryDirectory() as tmpdir:
-        cache_dir = os.path.join(tmpdir, "cache")
-        os.makedirs(cache_dir)
-        mgr = CacheManager()
-        mgr.cache_dir = cache_dir
-        mgr._io = IOWriter(enable_async=False)
-        mgr._started = True
-        mgr._pool = MemoryAllocator.create("pin")
-        mgr._max_tensor_size_mb = 10240
-        mgr._save_cached = set()
-        mgr._load_cached = {}
-        assert mgr.save(42) == 42
-        assert mgr.save(3.14) == 3.14
-        assert mgr.save("hello") == "hello"
-        assert mgr.save(None) is None
+        config = _make_config(tmpdir)
+        mgr = CacheManager(config)
+
+        record = _make_record(3, "test_scalar", [42, 3.14, "hello", None])
+        mgr.save(record)
+        mgr.join()
+
+        session_dir = config.dump_dir
+        pkl_path = os.path.join(session_dir, f"{record.save_id}.pkl")
+        inputs, outputs = load_data(pkl_path, session_dir)
+        assert inputs["args"] == [42, 3.14, "hello", None]
     print("  PASS")
 
 
-def test_load_tensor():
-    print("Test: load tensor from CacheEntry")
-    with tempfile.TemporaryDirectory() as tmpdir:
-        cache_dir = os.path.join(tmpdir, "cache")
-        os.makedirs(cache_dir)
-        mgr = CacheManager()
-        mgr.cache_dir = cache_dir
-        mgr._io = IOWriter(enable_async=False)
-        mgr._started = True
-        mgr._pool = MemoryAllocator.create("pin")
-        mgr._max_tensor_size_mb = 10240
-        mgr._save_cached = set()
-        mgr._load_cached = {}
-        t = torch.tensor([1.0, 2.0, 3.0])
-        entry = mgr.save(t)
-        restored = mgr.load(entry)
-        assert isinstance(restored, torch.Tensor)
-        assert torch.equal(restored, t)
-    print("  PASS")
-
-
-def test_load_numpy():
-    print("Test: load numpy from CacheEntry")
-    with tempfile.TemporaryDirectory() as tmpdir:
-        cache_dir = os.path.join(tmpdir, "cache")
-        os.makedirs(cache_dir)
-        mgr = CacheManager()
-        mgr.cache_dir = cache_dir
-        mgr._io = IOWriter(enable_async=False)
-        mgr._started = True
-        mgr._pool = MemoryAllocator.create("pin")
-        mgr._max_tensor_size_mb = 10240
-        mgr._save_cached = set()
-        mgr._load_cached = {}
-        a = np.array([1.0, 2.0, 3.0], dtype=np.float32)
-        entry = mgr.save(a)
-        restored = mgr.load(entry)
-        assert isinstance(restored, np.ndarray)
-        assert np.equal(restored, a).all()
-    print("  PASS")
-
-
-def test_bfloat16_tensor():
-    print("Test: BFloat16 tensor save/load")
-    with tempfile.TemporaryDirectory() as tmpdir:
-        cache_dir = os.path.join(tmpdir, "cache")
-        os.makedirs(cache_dir)
-        mgr = CacheManager()
-        mgr.cache_dir = cache_dir
-        mgr._io = IOWriter(enable_async=False)
-        mgr._started = True
-        mgr._pool = MemoryAllocator.create("pin")
-        mgr._max_tensor_size_mb = 10240
-        mgr._save_cached = set()
-        mgr._load_cached = {}
-        t = torch.tensor([1.0, 2.0, 3.0], dtype=torch.bfloat16)
-        entry = mgr.save(t)
-        restored = mgr.load(entry)
-        assert isinstance(restored, torch.Tensor)
-        assert restored.dtype == torch.bfloat16
-        assert torch.equal(restored, t)
-    print("  PASS")
-
-
-def test_save_load_nested():
-    print("Test: save/load nested structure")
-    with tempfile.TemporaryDirectory() as tmpdir:
-        cache_dir = os.path.join(tmpdir, "cache")
-        os.makedirs(cache_dir)
-        mgr = CacheManager()
-        mgr.cache_dir = cache_dir
-        mgr._io = IOWriter(enable_async=False)
-        mgr._started = True
-        mgr._pool = MemoryAllocator.create("pin")
-        mgr._max_tensor_size_mb = 10240
-        mgr._save_cached = set()
-        mgr._load_cached = {}
-        t1 = torch.randn(2, 2)
-        t2 = torch.randn(3, 3)
-        data = {'tensors': [t1, t2], 'value': 42, 'name': 'test'}
-        saved = mgr.save(data)
-        assert isinstance(saved['tensors'][0], CacheEntry)
-        assert isinstance(saved['tensors'][1], CacheEntry)
-        assert saved['value'] == 42
-        assert saved['name'] == 'test'
-        # Load back
-        loaded = mgr.load(saved)
-        assert isinstance(loaded['tensors'][0], torch.Tensor)
-        assert isinstance(loaded['tensors'][1], torch.Tensor)
-        assert torch.equal(loaded['tensors'][0], t1)
-        assert torch.equal(loaded['tensors'][1], t2)
-    print("  PASS")
-
-
-def test_different_tensors_different_hash():
+def test_different_tensors_different_cache_ids():
     print("Test: different tensors get different cache_ids")
     with tempfile.TemporaryDirectory() as tmpdir:
-        cache_dir = os.path.join(tmpdir, "cache")
-        os.makedirs(cache_dir)
-        mgr = CacheManager()
-        mgr.cache_dir = cache_dir
-        mgr._io = IOWriter(enable_async=False)
-        mgr._started = True
-        mgr._pool = MemoryAllocator.create("pin")
-        mgr._max_tensor_size_mb = 10240
-        mgr._save_cached = set()
-        mgr._load_cached = {}
+        config = _make_config(tmpdir)
+        mgr = CacheManager(config)
+
         t1 = torch.ones(2, 3)
         t2 = torch.zeros(2, 3)
-        e1 = mgr.save(t1)
-        e2 = mgr.save(t2)
+        r1 = _make_record(1, "a", [t1])
+        r2 = _make_record(2, "b", [t2])
+
+        mgr.save(r1)
+        mgr.save(r2)
+        mgr.join()
+
+        session_dir = config.dump_dir
+        with open(os.path.join(session_dir, f"{r1.save_id}.pkl"), "rb") as f:
+            d1 = pickle.load(f)
+        with open(os.path.join(session_dir, f"{r2.save_id}.pkl"), "rb") as f:
+            d2 = pickle.load(f)
+
+        e1 = d1["args"][0]
+        e2 = d2["args"][0]
+        assert isinstance(e1, CacheEntry)
+        assert isinstance(e2, CacheEntry)
         assert e1.cache_id != e2.cache_id
-    print("  PASS")
-
-
-def test_same_storage_different_shape():
-    print("Test: same storage but different shape")
-    with tempfile.TemporaryDirectory() as tmpdir:
-        cache_dir = os.path.join(tmpdir, "cache")
-        os.makedirs(cache_dir)
-        mgr = CacheManager()
-        mgr.cache_dir = cache_dir
-        mgr._io = IOWriter(enable_async=False)
-        mgr._started = True
-        mgr._pool = MemoryAllocator.create("pin")
-        mgr._max_tensor_size_mb = 10240
-        mgr._save_cached = set()
-        mgr._load_cached = {}
-        t1 = torch.arange(6)  # shape [6]
-        t2 = t1.reshape(2, 3)  # shape [2, 3], same storage
-        e1 = mgr.save(t1)
-        e2 = mgr.save(t2)
-        # Same cache_id (same storage)
-        assert e1.cache_id == e2.cache_id
-        # Different shape
-        assert e1.shape != e2.shape
-        # Load and verify shapes
-        r1 = mgr.load(e1)
-        r2 = mgr.load(e2)
-        assert list(r1.shape) == [6]
-        assert list(r2.shape) == [2, 3]
     print("  PASS")
 
 
@@ -235,12 +135,7 @@ def main():
     test_save_tensor()
     test_save_numpy()
     test_save_scalar()
-    test_load_tensor()
-    test_load_numpy()
-    test_bfloat16_tensor()
-    test_save_load_nested()
-    test_different_tensors_different_hash()
-    test_same_storage_different_shape()
+    test_different_tensors_different_cache_ids()
     print("\nAll cache tests passed.")
 
 

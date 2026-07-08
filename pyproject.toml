@@ -8,6 +8,8 @@ version = "0.1.0"
 dependencies = [
     "torch",
     "numpy",
+    "loguru",
+    "xxhash",
 ]
 
 [tool.setuptools.packages]

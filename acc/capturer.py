@@ -1,11 +1,12 @@
-"""Capturer with pluggable backends: OpsCapturer (TorchDispatchMode) and ModuleCapturer (forward hooks)."""
+"""Capturer facade + OpsCapturer + ModuleCapturer + Library.__getattribute__ patch."""
 
 import functools
 import torch
 from torch.utils._python_dispatch import TorchDispatchMode
+from loguru import logger
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
 # Module-level: patch Library.__getattribute__ so that impl / _register_fake
 # are intercepted on EVERY Library instance, regardless of when it was
 # created (before or after this module is imported).
@@ -20,7 +21,7 @@ from torch.utils._python_dispatch import TorchDispatchMode
 # Covers both APIs with a single patch:
 #   my_lib.impl(op, fn, "CPU")          → Library.__getattribute__ → wrapped
 #   torch.library.impl("ns::op", "CPU") → _impl → use_lib.impl()  → same path
-# ═══════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
 
 def _kernel_wrapper(fn):
     """Wrap a kernel so it re-enters the active TorchDispatchMode."""
@@ -37,7 +38,6 @@ _WRAPPED_METHODS = frozenset({'impl', '_register_fake'})
 
 if hasattr(torch.library, 'Library'):
     _original_library_getattribute = torch.library.Library.__getattribute__
-    print("[DUMP PATCH] Installing Library.__getattribute__ patch")
 
     def _patched_getattribute(self, name):
         attr = _original_library_getattribute(self, name)
@@ -52,55 +52,70 @@ if hasattr(torch.library, 'Library'):
     torch.library.Library.__getattribute__ = _patched_getattribute
 
 
-# ═══════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
+# Backend factory
+# ═══════════════════════════════════════════════════════════════════
+
+def create_backends(config, model=None):
+    """Create capture backend instances from config.capturer_backends.
+
+    Returns:
+        dict[str, object]: backend name → instance mapping.
+    """
+    backends = {}
+    names = [b.strip() for b in config.capturer_backends.split(",")]
+    for name in names:
+        if name == "ops":
+            backends["ops"] = OpsCapturer()
+        elif name == "module":
+            if model is None:
+                logger.warning(
+                    "module backend requires a model. "
+                    "Pass model= to acc_dump(). Skipping."
+                )
+                continue
+            backends["module"] = ModuleCapturer(model)
+        else:
+            raise ValueError(
+                f"Unknown capturer backend: '{name}'. Expected 'ops' or 'module'."
+            )
+    return backends
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Capturer facade
+# ═══════════════════════════════════════════════════════════════════
 
 class Capturer:
-    """Facade: manages multiple capture backends internally.
+    """Facade managing multiple capture backends.
 
-    Usage::
-        capturer = Capturer(model=model)
-        capturer.start(handler)
-        ...
-        capturer.stop()
+    __init__ receives a handler and starts all backends immediately.
+    Only stop() is exposed publicly.
+
+    The handler signature is::
+
+        handler(capturer_type: str, capturer_key: str,
+                args, kwargs, outputs)
     """
 
-    @staticmethod
-    def _handler_wrapper(backend_name, handler):
-        if handler is None:
-            return None
-        return lambda key, args, kwargs, outputs: handler(backend_name, key, args, kwargs, outputs)
-
-    def __init__(self, model=None):
-        self._backends: dict[str, object] = {}
-        self._model = model
-
-    def start(self, handler):
-        from .config import config
-
-        backends = [b.strip() for b in config.capturer_backends.split(",")]
-
-        for name in backends:
-            if name == "ops":
-                backend = OpsCapturer()
-            elif name == "module":
-                if self._model is None:
-                    print("[WARN] module backend requires a model. Pass model= to acc_dump(). Skipping module backend.")
-                    continue
-                backend = ModuleCapturer(self._model)
-            else:
-                raise ValueError(
-                    f"Unknown capturer backend: '{name}'. Expected 'ops' or 'module'."
-                )
-            backend.start(Capturer._handler_wrapper(name, handler))
+    def __init__(self, config, model=None, handler=None):
+        self._backends = {}
+        for name, backend in create_backends(config, model).items():
+            wrapped = functools.partial(handler, name)
+            backend.start(wrapped)
             self._backends[name] = backend
-            print(f"[CAPTURER] {name} backend started")
+            logger.info(f"[Capturer] {name} backend started")
 
     def stop(self):
         for name, backend in list(self._backends.items()):
             backend.stop()
-            print(f"[CAPTURER] {name} backend stopped")
+            logger.info(f"[Capturer] {name} backend stopped")
         self._backends.clear()
 
+
+# ═══════════════════════════════════════════════════════════════════
+# OpsCapturer (TorchDispatchMode)
+# ═══════════════════════════════════════════════════════════════════
 
 class OpsCapturer(TorchDispatchMode):
     """Captures PyTorch operators via TorchDispatchMode."""
@@ -111,19 +126,11 @@ class OpsCapturer(TorchDispatchMode):
         super().__init__()
         self._handler = None
         self._in_dispatch = False
-        self._enabled = True
 
     def start(self, handler):
-        from .config import config
-
         self._handler = handler
-        self._enabled = config.dump_enabled
-        if self._enabled:
-            self.__class__._active_instance = self
-            self.__enter__()
-            print(f"[OPS CAPTURER] started (dump_enabled={self._enabled})")
-        else:
-            print(f"[OPS CAPTURER] not started (dump_enabled={self._enabled})")
+        self.__class__._active_instance = self
+        self.__enter__()
 
     def stop(self):
         self.__class__._active_instance = None
@@ -131,7 +138,7 @@ class OpsCapturer(TorchDispatchMode):
         self._handler = None
 
     def __torch_dispatch__(self, func, types, args=(), kwargs=None):
-        if not self._enabled or self._in_dispatch or self._handler is None:
+        if self._in_dispatch or self._handler is None:
             return func(*args, **(kwargs or {}))
         kwargs = kwargs or {}
         result = func(*args, **kwargs)
@@ -143,6 +150,10 @@ class OpsCapturer(TorchDispatchMode):
         return result
 
 
+# ═══════════════════════════════════════════════════════════════════
+# ModuleCapturer (forward hooks)
+# ═══════════════════════════════════════════════════════════════════
+
 class ModuleCapturer:
     """Captures module forward calls via forward hooks."""
 
@@ -150,17 +161,9 @@ class ModuleCapturer:
         self._model = model
         self._handler = None
         self._handles: list[torch.utils.hooks.RemovableHandle] = []
-        self._enabled = True
 
     def start(self, handler):
-        from .config import config
-
         self._handler = handler
-        self._enabled = config.dump_enabled
-        if not self._enabled:
-            print(f"[MODULE CAPTURER] not started (dump_enabled={self._enabled})")
-            return
-
         self._handles.clear()
         for name, module in self._model.named_modules():
             if not name:
@@ -170,8 +173,6 @@ class ModuleCapturer:
             )
             self._handles.append(handle)
 
-        print(f"[MODULE CAPTURER] started: {len(self._handles)} modules hooked")
-
     def stop(self):
         for handle in self._handles:
             handle.remove()
@@ -180,7 +181,7 @@ class ModuleCapturer:
 
     def _make_hook(self, module_name):
         def hook(_module, args, kwargs, output):
-            if not self._enabled or self._handler is None:
+            if self._handler is None:
                 return None
             self._handler(module_name, args, kwargs, output)
             return None

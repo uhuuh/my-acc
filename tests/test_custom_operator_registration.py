@@ -22,7 +22,7 @@ def get_keys_from_dump(session_dir):
         json_path = os.path.join(session_dir, json_file)
         with open(json_path, 'r') as f:
             metadata = json.load(f)
-        keys.append(metadata['key'])
+        keys.append(metadata.get('capturer_key', metadata.get('key', '')))
     return keys
 
 

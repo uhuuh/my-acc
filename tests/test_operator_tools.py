@@ -18,30 +18,30 @@ def test_acc_dump_context_manager():
     print("=" * 60)
     print("Test 1: acc_dump as context manager")
     print("=" * 60)
-    
-    # Create temp directory for dumps
+
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Test context manager
-        with acc_dump(tmpdir) as dumper:
-            # Create some tensors and operations
+        with acc_dump(tmpdir):
             a = torch.randn(32, 64)
             b = torch.randn(64, 128)
             c = torch.matmul(a, b)
             d = c + torch.randn(32, 128)
             e = torch.relu(d)
-        
-        # Check dump directory exists
-        dump_dirs = [d for d in os.listdir(tmpdir) if os.path.isdir(os.path.join(tmpdir, d))]
+
+        dump_dirs = [
+            d for d in os.listdir(tmpdir)
+            if os.path.isdir(os.path.join(tmpdir, d))
+        ]
         print(f"\nCreated dump directories: {dump_dirs}")
-        
-        # Check dump files
+
         for dump_dir in dump_dirs:
             dump_path = os.path.join(tmpdir, dump_dir)
-            dump_files = [f for f in os.listdir(dump_path) if f.endswith('.pkl')]
+            dump_files = [
+                f for f in os.listdir(dump_path) if f.endswith('.pkl')
+            ]
             print(f"Dump files in {dump_dir}: {len(dump_files)} files")
-            for f in dump_files[:5]:  # Show first 5 files
+            for f in dump_files[:5]:
                 print(f"  - {f}")
-    
+
     print("\nPASS: Test 1 passed\n")
 
 
@@ -50,41 +50,42 @@ def test_acc_comp():
     print("=" * 60)
     print("Test 3: acc_comp")
     print("=" * 60)
-    
+
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Create two dump sessions with similar operations
         dump_dir_a = os.path.join(tmpdir, "dump_a")
         dump_dir_b = os.path.join(tmpdir, "dump_b")
         os.makedirs(dump_dir_a)
         os.makedirs(dump_dir_b)
-        
-        # First session (A)
-        with acc_dump(dump_dir_a) as dumper:
+
+        with acc_dump(dump_dir_a):
             a1 = torch.randn(32, 64)
             b1 = torch.randn(64, 128)
             c1 = torch.matmul(a1, b1)
             d1 = torch.relu(c1)
-        
-        # Second session (B) - same ops but different values
-        with acc_dump(dump_dir_b) as dumper:
+
+        with acc_dump(dump_dir_b):
             a2 = torch.randn(32, 64)
             b2 = torch.randn(64, 128)
             c2 = torch.matmul(a2, b2)
             d2 = torch.relu(c2)
-        
-        # Get the session directories
-        sessions_a = [d for d in os.listdir(dump_dir_a) if os.path.isdir(os.path.join(dump_dir_a, d))]
-        sessions_b = [d for d in os.listdir(dump_dir_b) if os.path.isdir(os.path.join(dump_dir_b, d))]
-        
+
+        sessions_a = [
+            d for d in os.listdir(dump_dir_a)
+            if os.path.isdir(os.path.join(dump_dir_a, d))
+        ]
+        sessions_b = [
+            d for d in os.listdir(dump_dir_b)
+            if os.path.isdir(os.path.join(dump_dir_b, d))
+        ]
+
         session_a_path = os.path.join(dump_dir_a, sessions_a[0])
         session_b_path = os.path.join(dump_dir_b, sessions_b[0])
-        
+
         print(f"\nComparing: {sessions_a[0]} <-> {sessions_b[0]}")
         print("-" * 60)
-        
-        # Compare dumps
+
         acc_comp(session_a_path, session_b_path)
-    
+
     print("\nPASS: Test 3 passed\n")
 
 
@@ -93,17 +94,15 @@ def main():
     print("\n" + "=" * 60)
     print("ACC Package - Integration Tests")
     print("=" * 60 + "\n")
-    
-    # Test import first
+
     print("Testing import...")
     print(f"  acc_dump: {acc_dump}")
     print(f"  acc_comp: {acc_comp}")
     print("PASS: Import successful\n")
-    
-    # Run tests
+
     test_acc_dump_context_manager()
     test_acc_comp()
-    
+
     print("=" * 60)
     print("All tests passed!")
     print("=" * 60)

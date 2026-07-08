@@ -29,3 +29,4 @@ my/
 .claude/
 .vscode/
 .pytest_cache/
+_acc_dump/

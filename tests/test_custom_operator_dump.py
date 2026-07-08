@@ -62,7 +62,7 @@ def test_custom_module_acc_dump():
             json_path = os.path.join(session_dir, json_file)
             with open(json_path, 'r') as f:
                 metadata = json.load(f)
-            opnames.append(metadata['key'])
+            opnames.append(metadata.get('capturer_key', metadata.get('key', '')))
 
         print(f"Operators: {opnames}")
 
@@ -101,7 +101,7 @@ def test_custom_function_acc_dump():
             json_path = os.path.join(session_dir, json_file)
             with open(json_path, 'r') as f:
                 metadata = json.load(f)
-            opnames.append(metadata['key'])
+            opnames.append(metadata.get('capturer_key', metadata.get('key', '')))
 
         print(f"Operators: {opnames}")
 
@@ -144,7 +144,7 @@ def test_nested_custom_calls():
             json_path = os.path.join(session_dir, json_file)
             with open(json_path, 'r') as f:
                 metadata = json.load(f)
-            opnames.append(metadata['key'])
+            opnames.append(metadata.get('capturer_key', metadata.get('key', '')))
 
         print(f"Operators: {opnames}")
 
@@ -178,7 +178,7 @@ def test_backward_pass_not_captured():
             json_path = os.path.join(session_dir, json_file)
             with open(json_path, 'r') as f:
                 metadata = json.load(f)
-            opnames.append(metadata['key'])
+            opnames.append(metadata.get('capturer_key', metadata.get('key', '')))
 
         print(f"Forward operators: {opnames}")
 
@@ -208,7 +208,7 @@ def test_backward_pass_not_captured():
                 json_path = os.path.join(session_dir2, json_file)
                 with open(json_path, 'r') as f:
                     metadata = json.load(f)
-                opnames2.append(metadata['key'])
+                opnames2.append(metadata.get('capturer_key', metadata.get('key', '')))
 
             print(f"All operators (forward+backward): {opnames2}")
 
@@ -293,12 +293,18 @@ def test_backward_detailed_check():
             with open(json_path, 'r') as f:
                 metadata = json.load(f)
 
-            opname = metadata['key']
+            opname = metadata.get('capturer_key', metadata.get('key', ''))
             opnames.append(opname)
 
             print(f"  {json_file}")
             print(f"  Opname: {opname}")
-            print(f"  Source: {metadata.get('filename', '')}:{metadata.get('lineno', 0)} in {metadata.get('function', '')}")
+            # Source info now in call_stack, but check old fields for compat
+            call_stack = metadata.get('call_stack', [])
+            if call_stack:
+                top = call_stack[-1]
+                print(f"  Source (from call_stack): {top.get('filepath', '')}:{top.get('lineno', 0)} in {top.get('function', '')}")
+            else:
+                print(f"  Source: {metadata.get('filename', '')}:{metadata.get('lineno', 0)} in {metadata.get('function', '')}")
 
         print("-" * 80)
         print(f"\nAll operators ({len(opnames)}): {opnames}")

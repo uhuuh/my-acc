@@ -1,179 +1,270 @@
-"""Content-addressable cache for tensor/numpy deduplication."""
+"""Dump pipeline orchestration: split, hash, deduplicate, write, release."""
 
 import os
-import time as _time_module
-from dataclasses import dataclass
-from typing import Any, List, Set, Optional, Dict
+import queue
+import threading
+import time
 
-import numpy as np
 import torch
+import torch.multiprocessing as mp
+from loguru import logger
 
-from .memory import Storage, MemoryAllocator
-from .io import IOWriter
+from .dump_format import (
+    JsonlWriter,
+    LOCATIONS_FILE,
+    RECORDS_FILE,
+)
+from .record_splitter import RecordSplitter
+from .shared import SharedTensorManager
+from .tensor_utils import hash_tensor, tensor_nbytes
+from .tensor_writer import ShardedTensorWriter
+
+try:
+    torch.multiprocessing.set_sharing_strategy("file_system")
+except RuntimeError:
+    pass
 
 
-@dataclass
-class CacheEntry:
-    """Metadata for a cached tensor/numpy array."""
-    cache_id: str
-    type: str
-    dtype: str
-    shape: List[int]
-
-
-def _tensor_size_mb(obj) -> float:
-    if isinstance(obj, torch.Tensor):
-        return obj.numel() * obj.element_size() / (1024 * 1024)
-    return obj.size * obj.itemsize / (1024 * 1024)
-
-
-class CacheManager:
+class Stats:
     def __init__(self):
-        self.cache_dir = None
-        self._io = None
-        self._save_cached: Set[str] = set()
-        self._load_cached: Dict[str, torch.Tensor] = {}
-        self._pool = None
-        self._max_tensor_size_mb = None
-        self._writes_this_interval = 0
-        self._writes_total = 0
-        self._hits_this_interval = 0
-        self._hits_total = 0
-        self._last_monitor_time = 0.0
-        self._started = False
+        self._lock = threading.Lock()
+        self.to_cpu_bytes = 0
+        self.hash_bytes = 0
+        self.write_bytes = 0
+        self.cache_hits = 0
+        self.cache_misses = 0
 
-    def start(self, session_dir):
-        from .config import config
-        self._started = True
-        self.cache_dir = os.path.join(session_dir, 'cache')
-        os.makedirs(self.cache_dir, exist_ok=False)
-        self._pool = MemoryAllocator.create(config.memory_allocator)
-        self._max_tensor_size_mb = config.max_tensor_size_mb
-        self._io = IOWriter(name="cache", on_done=self._on_io_done)
-        self._io.start()
-        self._save_cached = set()
-        self._load_cached = {}
-        self._writes_this_interval = 0
-        self._writes_total = 0
-        self._hits_this_interval = 0
-        self._hits_total = 0
-        self._last_monitor_time = _time_module.time()
-        print(f"[CACHE] started: {self.cache_dir}")
+    def add(self, name: str, value: int = 1):
+        with self._lock:
+            setattr(self, name, getattr(self, name) + value)
 
-    def stop(self):
-        if self._io is not None:
-            self._io.stop()
-        self._started = False
-        print(f"[CACHE] stopped")
+    def snapshot(self):
+        with self._lock:
+            return {
+                "to_cpu_bytes": self.to_cpu_bytes,
+                "hash_bytes": self.hash_bytes,
+                "write_bytes": self.write_bytes,
+                "cache_hits": self.cache_hits,
+                "cache_misses": self.cache_misses,
+            }
 
-    def _on_io_done(self, content):
-        if isinstance(content, torch.Tensor) and self._pool is not None:
-            self._pool.release(content)
 
-    def _check_monitor(self):
-        from .config import config
-        now = _time_module.time()
-        elapsed = now - self._last_monitor_time
-        if elapsed >= config.cache_monitor_interval:
-            i_hits = self._hits_this_interval
-            i_writes = self._writes_this_interval
-            i_rate = i_hits / i_writes * 100 if i_writes > 0 else 0
-            h_hits = self._hits_total
-            h_writes = self._writes_total
-            h_rate = h_hits / h_writes * 100 if h_writes > 0 else 0
+class DumpPipeline:
+    def __init__(self, config):
+        os.makedirs(config.dump_dir, exist_ok=True)
+        self._stats = Stats()
+        self._shared = SharedTensorManager()
+        self._splitter = RecordSplitter(self._shared)
+        self._records = JsonlWriter(os.path.join(config.dump_dir, RECORDS_FILE))
+        self._locations = JsonlWriter(os.path.join(config.dump_dir, LOCATIONS_FILE))
 
-            pool_stats = ""
-            if hasattr(self._pool, 'pool_stats'):
-                s = self._pool.pool_stats()
-                if s:
-                    pool_bytes, pool_delta = s
-                    delta_sign = "+" if pool_delta >= 0 else ""
-                    pool_stats = f" | Pool: {self._format_bytes(pool_bytes)} (Δ {delta_sign}{self._format_bytes(abs(pool_delta))})"
+        self._hash_to_location = {}
+        self._pending_by_hash = {}
+        self._save_lock = threading.Lock()
+        self._cache_lock = threading.Lock()
+        self._errors = []
+        self._errors_lock = threading.Lock()
+        self._stopping = threading.Event()
+        self._started_at = time.perf_counter()
 
-            print(f"[CACHE MONITOR] Interval: Hits={i_hits} Writes={i_writes} Rate={i_rate:.1f}%"
-                  f" | Historical: Hits={h_hits} Writes={h_writes} Rate={h_rate:.1f}%"
-                  f"{pool_stats}")
+        self._hash_worker_count = max(1, int(config.hash_workers or 1))
+        self._hash_use_processes = self._shared.shared_enabled
+        self._hash_in, self._hash_out, self._hash_workers = self._start_hash_workers()
 
-            self._writes_this_interval = 0
-            self._hits_this_interval = 0
-            self._last_monitor_time = now
+        self._writer = ShardedTensorWriter(
+            config.dump_dir,
+            config.cache_write_workers,
+            self._on_tensor_written,
+        )
+        self._cache_thread = threading.Thread(
+            target=self._cache_loop,
+            name="acc-cache-check",
+            daemon=False,
+        )
+        self._cache_thread.start()
+        self._monitor_thread = threading.Thread(
+            target=self._monitor_loop,
+            name="acc-monitor",
+            daemon=True,
+        )
+        self._monitor_thread.start()
 
-    def _format_bytes(self, num_bytes):
-        units = ['B', 'KB', 'MB', 'GB']
-        value = float(num_bytes)
-        unit_idx = 0
-        while value >= 1024 and unit_idx < len(units) - 1:
-            value /= 1024
-            unit_idx += 1
-        return f"{value:,.2f} {units[unit_idx]}"
+    def save(self, record):
+        self._raise_if_failed()
+        try:
+            with self._save_lock:
+                info, tensors = self._splitter.split(record)
+                self._records.write(info)
+                for tensor_id, tensor in tensors:
+                    self._stats.add("to_cpu_bytes", tensor_nbytes(tensor))
+                    self._hash_in.put((tensor_id, tensor))
+        except BaseException as exc:
+            self._record_error(f"record save failed: {exc}")
+            self._raise_if_failed()
 
-    def save(self, data):
-        if not self._started:
-            raise RuntimeError("CacheManager not started")
-        def processor(obj):
-            if not isinstance(obj, (torch.Tensor, np.ndarray)):
-                return obj
-            self._writes_this_interval += 1
-            self._writes_total += 1
-            if self._max_tensor_size_mb is not None:
-                size_mb = _tensor_size_mb(obj)
-                if size_mb > self._max_tensor_size_mb:
-                    print(f"[DUMP WARN] Tensor size {size_mb:.2f} MB exceeds limit, replacing with None")
-                    return None
-            storage = Storage(obj)
-            cache_id = storage.cache_id
-            entry = CacheEntry(
-                cache_id=cache_id,
-                type='tensor' if isinstance(obj, torch.Tensor) else 'numpy',
-                dtype=str(obj.dtype).replace('torch.', ''),
-                shape=list(obj.shape)
+    def close(self):
+        for _ in self._hash_workers:
+            self._hash_in.put(None)
+        for worker in self._hash_workers:
+            worker.join()
+            if self._hash_use_processes and worker.exitcode != 0:
+                self._record_error(f"hash worker failed: exitcode={worker.exitcode}")
+
+        self._cache_thread.join()
+        self._writer.close()
+        self._stopping.set()
+        self._records.close()
+        self._locations.close()
+        self._log_summary()
+        self._raise_if_failed()
+
+    def _start_hash_workers(self):
+        if self._hash_use_processes:
+            ctx = mp.get_context("fork")
+            hash_in = ctx.Queue()
+            hash_out = ctx.Queue()
+            workers = [
+                ctx.Process(target=_hash_worker, args=(hash_in, hash_out))
+                for _ in range(self._hash_worker_count)
+            ]
+        else:
+            hash_in = queue.Queue()
+            hash_out = queue.Queue()
+            workers = [
+                threading.Thread(
+                    target=_hash_worker,
+                    args=(hash_in, hash_out),
+                    name=f"acc-hash-{i}",
+                    daemon=False,
+                )
+                for i in range(self._hash_worker_count)
+            ]
+        for worker in workers:
+            worker.start()
+        return hash_in, hash_out, workers
+
+    def _cache_loop(self):
+        done_workers = 0
+        try:
+            while done_workers < len(self._hash_workers):
+                item = self._hash_out.get()
+                if item is None:
+                    done_workers += 1
+                    continue
+                tensor_id, content_hash, tensor = item
+                self._stats.add("hash_bytes", tensor_nbytes(tensor))
+                self._handle_hashed_tensor(tensor_id, content_hash, tensor)
+        except BaseException as exc:
+            self._record_error(f"cache loop failed: {exc}")
+
+    def _handle_hashed_tensor(self, tensor_id, content_hash, tensor):
+        with self._cache_lock:
+            location = self._hash_to_location.get(content_hash)
+            if location is not None:
+                self._stats.add("cache_hits")
+                self._record_tensor_location(tensor_id, location)
+                self._shared.release(tensor)
+                return
+
+            pending = self._pending_by_hash.get(content_hash)
+            if pending is not None:
+                self._stats.add("cache_hits")
+                pending.append((tensor_id, tensor))
+                return
+
+            self._stats.add("cache_misses")
+            self._pending_by_hash[content_hash] = [(tensor_id, tensor)]
+
+        self._writer.submit(tensor_id, content_hash, tensor)
+
+    def _on_tensor_written(self, tensor_id, content_hash, tensor, location):
+        with self._cache_lock:
+            pending = self._pending_by_hash.pop(content_hash, [(tensor_id, tensor)])
+            self._hash_to_location[content_hash] = location
+            for pending_id, pending_tensor in pending:
+                self._record_tensor_location(pending_id, location)
+                self._shared.release(pending_tensor)
+            self._stats.add("write_bytes", location.nbytes)
+
+    def _record_tensor_location(self, tensor_id: int, location):
+        self._locations.write({
+            "id": tensor_id,
+            "file": location.file,
+            "offset": location.offset,
+            "nbytes": location.nbytes,
+        })
+
+    def _log_summary(self):
+        elapsed = max(time.perf_counter() - self._started_at, 1e-9)
+        stats = self._stats.snapshot()
+        writer = self._writer.stats.snapshot()
+        logger.info(
+            "[acc summary] "
+            f"elapsed={elapsed:.2f}s "
+            f"to_cpu={stats['to_cpu_bytes'] / 1024**3:.2f}GB/"
+            f"{_gbps(stats['to_cpu_bytes'] / elapsed)} "
+            f"hash={stats['hash_bytes'] / 1024**3:.2f}GB/"
+            f"{_gbps(stats['hash_bytes'] / elapsed)} "
+            f"write={stats['write_bytes'] / 1024**3:.2f}GB/"
+            f"{_gbps(stats['write_bytes'] / elapsed)} "
+            f"writer_items={writer['items']} "
+            f"writer_sys={writer['write_seconds']:.2f}s "
+            f"writer_view={writer['view_seconds']:.2f}s "
+            f"writer_cb={writer['callback_seconds']:.2f}s "
+            f"cache_hit={stats['cache_hits']} "
+            f"cache_miss={stats['cache_misses']}"
+        )
+
+    def _monitor_loop(self):
+        last = self._stats.snapshot()
+        last_writer = self._writer.stats.snapshot()
+        while not self._stopping.wait(1.0):
+            current = self._stats.snapshot()
+            dt = {key: current[key] - last.get(key, 0) for key in current}
+            last = current
+            writer = self._writer.stats.snapshot()
+            writer_dt = {
+                key: writer[key] - last_writer.get(key, 0)
+                for key in writer
+                if key not in ("pending_bytes", "pending_items")
+            }
+            last_writer = writer
+            logger.info(
+                "[acc stats] "
+                f"to_cpu={_gbps(dt['to_cpu_bytes'])} "
+                f"hash={_gbps(dt['hash_bytes'])} "
+                f"write={_gbps(dt['write_bytes'])} "
+                f"writer_items={writer_dt['items']} "
+                f"writer_pending={writer['pending_bytes'] / 1024**3:.2f}GB/"
+                f"{writer['pending_items']} "
+                f"writer_view={writer_dt['view_seconds'] * 1000:.1f}ms "
+                f"writer_sys={writer_dt['write_seconds'] * 1000:.1f}ms "
+                f"writer_cb={writer_dt['callback_seconds'] * 1000:.1f}ms "
+                f"cache_hit={current['cache_hits']} "
+                f"cache_miss={current['cache_misses']} "
+                f"shared={self._shared.used_bytes / 1024**3:.2f}GB"
             )
-            if cache_id not in self._save_cached:
-                storage_tensor = storage.materialize(self._pool)
-                filepath = os.path.join(self.cache_dir, f"{cache_id}.pt")
-                self._io.save(filepath, storage_tensor)
-                self._save_cached.add(cache_id)
-            else:
-                self._hits_this_interval += 1
-                self._hits_total += 1
-            self._check_monitor()
-            return entry
-        return self._traverse(data, processor)
 
-    def load(self, data: Any) -> Any:
-        """Traverse data, resolve CacheEntry back to tensors/numpy, cache in memory."""
-        def processor(obj: Any) -> Any:
-            if not isinstance(obj, CacheEntry):
-                return obj
-            if obj.cache_id not in self._load_cached:
-                filepath = os.path.join(self.cache_dir, f"{obj.cache_id}.pt")
-                self._load_cached[obj.cache_id] = torch.load(filepath, weights_only=False)
-            storage = self._load_cached[obj.cache_id]
-            if obj.type == 'tensor':
-                t = storage
-                if list(t.shape) != obj.shape:
-                    t = t.reshape(obj.shape)
-                target_dtype = getattr(torch, obj.dtype.replace('torch.', ''))
-                if t.dtype != target_dtype:
-                    t = t.to(target_dtype)
-                return t
-            arr = storage.numpy()
-            if list(arr.shape) != obj.shape:
-                arr = arr.reshape(obj.shape)
-            return arr
-        return self._traverse(data, processor)
+    def _record_error(self, message: str):
+        logger.error(message)
+        with self._errors_lock:
+            self._errors.append(message)
 
-    @staticmethod
-    def _traverse(data: Any, processor) -> Any:
-        if isinstance(data, dict):
-            return {k: CacheManager._traverse(v, processor) for k, v in data.items()}
-        if isinstance(data, list):
-            return [CacheManager._traverse(item, processor) for item in data]
-        if isinstance(data, tuple):
-            return tuple(CacheManager._traverse(item, processor) for item in data)
-        if isinstance(data, (type(None), int, float, str, bool, bytes)):
-            return data
-        result = processor(data)
-        if result is data:
-            return None
-        return result
+    def _raise_if_failed(self):
+        with self._errors_lock:
+            if self._errors:
+                raise RuntimeError(self._errors[0])
+
+
+def _hash_worker(input_queue, output_queue):
+    while True:
+        item = input_queue.get()
+        if item is None:
+            output_queue.put(None)
+            return
+        tensor_id, tensor = item
+        output_queue.put((tensor_id, hash_tensor(tensor), tensor))
+
+
+def _gbps(nbytes: int) -> str:
+    return f"{nbytes / 1024**3:.2f}GB/s"
